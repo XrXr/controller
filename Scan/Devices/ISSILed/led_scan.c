@@ -825,10 +825,13 @@ inline void LED_scan()
 		}
 		else
 		{
-			LED_enable = 1;
+			if (0)
+			{
+				LED_enable = 1;
 
-			// Start animations
-			Pixel_setAnimationControl( AnimationControl_Forward );
+				// Start animations
+				Pixel_setAnimationControl( AnimationControl_Forward );
+			}
 		}
 
 		LED_currentEvent = 0;

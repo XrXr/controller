@@ -21,7 +21,8 @@ BaseMap="scancode_map"
 # This is the default layer of the keyboard
 # NOTE: To combine kll files into a single layout, separate them by spaces
 # e.g.  DefaultMap="mylayout mylayoutmod"
-DefaultMap="k-type/release.1 stdFuncMap"
+#DefaultMap="stdFuncMap alan/k-type-base alan/alt-to-vim"
+DefaultMap="k-type/release.1 alan/k-type-base stdFuncMap"
 
 # This is where you set the additional layers
 # NOTE: Indexing starts at 1
@@ -29,6 +30,8 @@ DefaultMap="k-type/release.1 stdFuncMap"
 # e.g.  PartialMaps[1]="layer1 layer1mod"
 #       PartialMaps[2]="layer2"
 #       PartialMaps[3]="layer3"
+PartialMaps[1]="alan/layer1"
+PartialMaps[2]="alan/home-row-vim"
 
 
 
