@@ -1,0 +1,11 @@
+Name = "KType";
+Variant = "standard";
+Layout = "Standard";
+Base = "Base";
+Version = "0.1";
+Author = "Alan";
+Date = "2020-12-23";
+
+
+U"CAPSLOCK" : U"FUN2";
+U"App" : U"FUN1";

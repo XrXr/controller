@@ -1,0 +1,17 @@
+Name = soulmate;
+Version = 0.1;
+Author = "Alan Wu";
+
+Date = 2020-12-23;
+
+U"I"     : U"PageUp";
+U"N"     : U"PageDown";
+U"H"     : U"Home";
+U"Quote" : U"End";
+U"Space" : U"LCtrl";
+U"S"     : U"LShift";
+
+U"J" : U"LEFT";
+U"K" : U"DOWN";
+U"L" : U"UP";
+U";" : U"RIGHT";
