@@ -1,16 +1,16 @@
-/* Copyright (C) 2018 by Jacob Alexander
+/* Copyright (C) 2018-2020 by Jacob Alexander
  *
  * This file is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
+ * it under the terms of the GNU Lesser General Public License as published by
  * the Free Software Foundation, either version 3 of the License, or
  * (at your option) any later version.
  *
  * This file is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+ * GNU Lesser General Public License for more details.
  *
- * You should have received a copy of the GNU General Public License
+ * You should have received a copy of the GNU Lesser General Public License
  * along with this file.  If not, see <http://www.gnu.org/licenses/>.
  */
 
@@ -35,18 +35,21 @@ var_uint_t KLL_TriggerIndex_loopkup( TriggerType type, uint8_t index )
 	case TriggerType_Switch2:
 	case TriggerType_Analog2:
 	case TriggerType_Layer2:
+	case TriggerType_Animation2:
 		fullindex += 255;
 		break;
 
 	case TriggerType_Switch3:
 	case TriggerType_Analog3:
 	case TriggerType_Layer3:
+	case TriggerType_Animation3:
 		fullindex += 511;
 		break;
 
 	case TriggerType_Switch4:
 	case TriggerType_Analog4:
 	case TriggerType_Layer4:
+	case TriggerType_Animation4:
 		fullindex += 767;
 		break;
 
@@ -55,6 +58,13 @@ var_uint_t KLL_TriggerIndex_loopkup( TriggerType type, uint8_t index )
 	case TriggerType_Analog1:
 	case TriggerType_LED1:
 	case TriggerType_Layer1:
+	case TriggerType_Animation1:
+	case TriggerType_Sleep1:
+	case TriggerType_Resume1:
+	case TriggerType_Inactive1:
+	case TriggerType_Active1:
+	case TriggerType_Rotation1:
+	case TriggerType_Dial1:
 	default:
 		break;
 	}
@@ -98,6 +108,21 @@ CapabilityState KLL_CapabilityState( ScheduleState state, TriggerType type )
 	case TriggerType_LED1:
 		switch ( state )
 		{
+		/*
+		// TODO (HaaTa): Adjust for normal triggers
+		// This is setup for basic state scheduling
+		// Activate
+		case ScheduleType_A:
+			return CapabilityState_Initial;
+
+		// On
+		case ScheduleType_On:
+			return CapabilityState_Initial;
+
+		// Deactivate
+		case ScheduleType_D:
+			return CapabilityState_Initial;
+		*/
 		// Activate
 		case ScheduleType_A:
 			return CapabilityState_Initial;
@@ -192,10 +217,32 @@ CapabilityState KLL_CapabilityState( ScheduleState state, TriggerType type )
 		}
 		break;
 
+	// Rotation
+	case TriggerType_Rotation1:
+		return CapabilityState_Initial;
+
+	// Dial
+	case TriggerType_Dial1:
+		switch ( state )
+		{
+		// Increase
+		case ScheduleType_Inc:
+			return CapabilityState_Any;
+
+		// Decrease
+		case ScheduleType_Dec:
+			return CapabilityState_Any;
+
+		// Invalid
+		default:
+			break;
+		}
+		break;
+
 	// Debug
 	case TriggerType_Debug:
 		// State must also be 0xFF to trigger debug
-		if ( state == 0xFF )
+		if ( state == ScheduleType_Debug )
 		{
 			return CapabilityState_Debug;
 		}

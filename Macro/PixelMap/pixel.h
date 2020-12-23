@@ -1,16 +1,16 @@
-/* Copyright (C) 2015-2018 by Jacob Alexander
+/* Copyright (C) 2015-2019 by Jacob Alexander
  *
  * This file is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
+ * it under the terms of the GNU Lesser General Public License as published by
  * the Free Software Foundation, either version 3 of the License, or
  * (at your option) any later version.
  *
  * This file is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+ * GNU Lesser General Public License for more details.
  *
- * You should have received a copy of the GNU General Public License
+ * You should have received a copy of the GNU Lesser General Public License
  * along with this file.  If not, see <http://www.gnu.org/licenses/>.
  */
 
@@ -104,17 +104,25 @@ typedef enum PixelAddressType {
 
 // Animation Replace Type
 typedef enum AnimationReplaceType {
-	AnimationReplaceType_None  = 0, // Don't replace (add new animation to stack if not full)
-	AnimationReplaceType_Basic = 1, // Replace only if the same trigger initiated
-	AnimationReplaceType_All   = 2, // Replace no matter what trigger initiated
-	AnimationReplaceType_State = 3, // Using same trigger, start on Activate/Press, stop on Deactivate/Release
+	AnimationReplaceType_None        = 0, // Don't replace (add new animation to stack if not full)
+	AnimationReplaceType_Basic       = 1, // Replace only if the same trigger initiated
+	AnimationReplaceType_All         = 2, // Replace no matter what trigger initiated
+	AnimationReplaceType_State       = 3, // Using same trigger, start on Activate/Press, stop on Deactivate/Release
+	AnimationReplaceType_Clear       = 4, // Clear all other animations before adding
+	AnimationReplaceType_ClearActive = 5, // Clear all other animations before adding, except paused (replace those)
 } AnimationReplaceType;
 
 // Animation Play State
 typedef enum AnimationPlayState {
-	AnimationPlayState_Start = 0, // Start animation
-	AnimationPlayState_Pause = 1, // Pause animation (default set by KLL Compiler)
-	AnimationPlayState_Stop  = 2, // Stop animation (removes animation state)
+	AnimationPlayState_Start     = 0,    // Start animation
+	AnimationPlayState_Pause     = 1,    // Pause animation (default set by KLL Compiler)
+	AnimationPlayState_Stop      = 2,    // Stop animation (removes animation state)
+	AnimationPlayState_Single    = 3,    // Play a single frame of the animation
+	AnimationPlayState_AutoStart = 0x80, // Set if animation is autostarting
+	                                     // Multiple conditions must be met to autostart an animation
+					     // This flag must be set
+					     // Only default animations can be autostarted
+					     // Exception would be NVM saved animations
 } AnimationPlayState;
 
 typedef enum AnimationControl {
@@ -124,7 +132,15 @@ typedef enum AnimationControl {
 	AnimationControl_Stop       = 3, // Clears all animations, then sets forward
 	AnimationControl_Reset      = 4, // Clears all animations, starts initial animations (sets forward)
 	AnimationControl_WipePause  = 5, // Pauses animations, clears the display
+	AnimationControl_Clear      = 6, // Clears the display, animations continue
 } AnimationControl;
+
+typedef enum PixelPeriodIndex {
+	PixelPeriodIndex_Off_to_On = 0, // Start, fading from off to on
+	PixelPeriodIndex_On        = 1, // Hold on
+	PixelPeriodIndex_On_to_Off = 2, // Fading from on to off
+	PixelPeriodIndex_Off       = 3, // Hold off
+} PixelPeriodIndex;
 
 
 
@@ -171,14 +187,14 @@ typedef struct PixelModElement {
 	};
 	uint8_t     data[0];          // Data size depends on PixelElement definition
 	                              // ( PixelElement.width / 8 + sizeof(PixelChange) ) * PixelElement.channels
-} __attribute((packed)) PixelModElement;
+} __attribute__((packed)) PixelModElement;
 
 // Pixel Mod Data Element
 // - Each element of uint8_t data[0]
 typedef struct PixelModDataElement {
 	PixelChange change;
 	uint8_t     data[0];
-} __attribute((packed)) PixelModDataElement;
+} __attribute__((packed)) PixelModDataElement;
 
 // Animation stack element
 typedef struct AnimationStackElement {
@@ -209,6 +225,34 @@ typedef struct AnimationStack {
 	AnimationStackElement *stack[Pixel_AnimationStackSize];
 } AnimationStack;
 
+// start/end are defined in the number of bits used for the variable
+// (1 << 0) == 1
+// (1 << 4) == 16
+// Maximum value is 24 (limit of algorithm)
+// (1 << 24) == 16777216 (0x1000000)
+// Maximum functional value is 15 (to save on EEPROM storage)
+// Actual time delay will depend on the current FPS setting for the LED driver
+typedef struct PixelPeriodConfig {
+	uint8_t start:4; // (1 << start) - 1
+	uint8_t end:4;   // (1 << end)
+} __attribute__((packed)) PixelPeriodConfig;
+
+typedef struct PixelFadeProfile {
+	// 0: Off -> On period
+	// 1: On hold time
+	// 2: On -> Off period
+	// 3: Off hold time
+	PixelPeriodConfig conf[4];
+	uint32_t pos;                 // Current position with the current PixelPeriodConfig
+	PixelPeriodIndex period_conf; // Which PixelPeriodConfig is being processed
+	uint8_t brightness;
+} PixelFadeProfile;
+
+typedef struct PixelLEDGroupEntry {
+	const uint16_t size;
+	const uint16_t *pixels;
+} PixelLEDGroupEntry;
+
 
 
 // ----- Variables -----
@@ -217,12 +261,20 @@ extern FrameState Pixel_FrameState;
 
 extern const AnimationStackElement Pixel_AnimationSettings[];
 
+extern const PixelLEDGroupEntry Pixel_LED_DefaultFadeGroups[];
+extern const PixelPeriodConfig  Pixel_LED_FadePeriods[];
+extern const uint8_t            Pixel_LED_FadePeriod_Defaults[4][4];
+extern const uint8_t            Pixel_LED_FadeBrightness[4];
+
 extern       PixelBuf     Pixel_Buffers[];
+extern       PixelBuf     LED_Buffers[];
 extern const PixelElement Pixel_Mapping[];
 extern const uint16_t     Pixel_DisplayMapping[];
 extern const uint8_t    **Pixel_Animations[];
 extern const uint16_t     Pixel_ScanCodeToDisplay[];
 extern const uint16_t     Pixel_ScanCodeToPixel[];
+
+extern const Layer        LayerIndex[];
 
 
 

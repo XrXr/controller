@@ -2,19 +2,19 @@
 Host-Side Python Commands for TestIn Scan Module
 '''
 
-# Copyright (C) 2016-2018 by Jacob Alexander
+# Copyright (C) 2016-2019 by Jacob Alexander
 #
 # This file is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
+# it under the terms of the GNU Lesser General Public License as published by
 # the Free Software Foundation, either version 3 of the License, or
 # (at your option) any later version.
 #
 # This file is distributed in the hope that it will be useful,
 # but WITHOUT ANY WARRANTY; without even the implied warranty of
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
+# GNU Lesser General Public License for more details.
 #
-# You should have received a copy of the GNU General Public License
+# You should have received a copy of the GNU Lesser General Public License
 # along with this file.  If not, see <http://www.gnu.org/licenses/>.
 
 ### Imports ###
@@ -54,6 +54,75 @@ logger = kiilogger.get_logger('Scan/TestIn/host.py')
 data = builtins.kiibohd_data
 debug = False
 control = builtins.kiibohd_control
+
+
+
+### Enums ###
+
+class ScheduleState:
+    '''
+    See kll.h ScheduleState
+    '''
+    P      = 0x01 # Press
+    H      = 0x02 # Hold
+    R      = 0x03 # Release
+    O      = 0x00 # Off
+    UP     = 0x04 # Unique Press
+    UR     = 0x05 # Unique Release
+
+    A      = 0x01 # Activate
+    On     = 0x02 # On
+    D      = 0x03 # Deactivate
+    Off    = 0x00 # Off
+
+    Done   = 0x06 # Done
+    Repeat = 0x07 # Repeat
+
+    Shift  = 0x10 # Shift
+    Latch  = 0x20 # Latch
+    Lock   = 0x40 # Lock
+
+    Debug  = 0xFF # Print capability name
+
+
+class TriggerType:
+    '''
+    See kll.h TriggerType
+    '''
+    Switch1    = 0x00
+    Switch2    = 0x01
+    Switch3    = 0x02
+    Switch4    = 0x03
+    LED1       = 0x04
+    Analog1    = 0x05
+    Analog2    = 0x06
+    Analog3    = 0x07
+    Analog4    = 0x08
+    Layer1     = 0x09
+    Layer2     = 0x0A
+    Layer3     = 0x0B
+    Layer4     = 0x0C
+    Animation1 = 0x0D
+    Animation2 = 0x0E
+    Animation3 = 0x0F
+    Animation4 = 0x10
+    Sleep1     = 0x11
+    Resume1    = 0x12
+    Inactive1  = 0x13
+    Active1    = 0x14
+    Rotation1  = 0x15
+
+    Debug      = 0xFF
+
+
+class LayerStateType:
+    '''
+    See kll.h LayerStateType
+    '''
+    Off   = 0x00
+    Shift = 0x01
+    Latch = 0x02
+    Lock  = 0x04
 
 
 
@@ -296,7 +365,17 @@ class Commands:
     Container class of commands available to controll the host-side KLL implementation
     '''
 
-    def addScanCode( self, scan_code ):
+    def setTriggerCode( self, index, index_type, state ):
+        '''
+        Adds a Trigger Code to the internal KLL buffer
+
+        Returns 1 if added, 0 if the ScanCode is already in the buffer
+        Returns 2 if there's an error
+        Generally 1 will be the return
+        '''
+        return control.kiibohd.Scan_setTriggerCode( int( index ), int( index_type ), int( state ) )
+
+    def addScanCode( self, index, index_type=TriggerType.Switch1 ):
         '''
         Adds a Scan Code to the internal KLL buffer
 
@@ -304,9 +383,9 @@ class Commands:
         Returns 2 if there's an error
         Generally 1 will be the return
         '''
-        return control.kiibohd.Scan_addScanCode( int( scan_code ) )
+        return control.kiibohd.Scan_addScanCode( int( index ), int( index_type ) )
 
-    def removeScanCode( self, scan_code ):
+    def removeScanCode( self, index, index_type=TriggerType.Switch1 ):
         '''
         Removes a Scan Code from the internal KLL buffer
         Ignored if the Scan Code was not in the buffer
@@ -315,7 +394,7 @@ class Commands:
         Returns 2 if there's an error
         Generally 0 will be the return
         '''
-        return control.kiibohd.Scan_removeScanCode( int( scan_code ) )
+        return control.kiibohd.Scan_removeScanCode( int( index ), int( index_type ) )
 
     def setMacroDebugMode( self, debugmode ):
         '''
@@ -355,6 +434,20 @@ class Commands:
         '''
         cast( control.kiibohd.triggerPendingDebugMode, POINTER( c_uint8 ) )[0] = debugmode
 
+    def applyLayer( self, state, layer, layer_state ):
+        '''
+        Applies a given layer with a layer_state
+        If state is already applied, it will be unset.
+
+        @param state: Input state used to apply layer (e.g. Press/Release)
+        @param layer: Layer index
+        @param layer_state: LayerStateType value
+        '''
+        trigger = 0
+        state_type = TriggerType.Switch1
+        control.kiibohd.Layer_layerStateSet(int(trigger), int(state), int(state_type), int(layer), int(layer_state))
+        self.recordLayerState()
+
     def lockLayer( self, layer ):
         '''
         Lock specified layer
@@ -362,10 +455,10 @@ class Commands:
         @param layer: Layer index to lock
         '''
         trigger = 0
-        state = 1
-        stateType = 0
-        layerState = 0x04
-        control.kiibohd.Layer_layerStateSet(int(trigger), int(state), int(stateType), int(layer), int(layerState))
+        state = ScheduleState.P
+        state_type = TriggerType.Switch1
+        layer_state = LayerStateType.Lock
+        control.kiibohd.Layer_layerStateSet(int(trigger), int(state), int(state_type), int(layer), int(layer_state))
         self.recordLayerState()
 
     def clearLayers( self ):
@@ -406,6 +499,12 @@ class Commands:
         Necessary to maintain proper layer history
         '''
         data.layer_history.add(self.getLayerState())
+
+    def clearMacroTriggerEventBuffer( self ):
+        '''
+        Clears the macroTriggerEventBuffer to make sure no old events are processed.
+        '''
+        cast( control.kiibohd.macroTriggerEventBufferSize, POINTER( control.var_uint_t ) )[0] = 0
 
     def addAnimation( self, name=None, index=0, pos=0, loops=1, divmask=0x0, divshift=0x0, ffunc=0, pfunc=0 ):
         '''

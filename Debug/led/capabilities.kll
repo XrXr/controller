@@ -1,0 +1,24 @@
+# led
+Name = led;
+Version = 0.2;
+Author = "HaaTa (Jacob Alexander) 2018-2019";
+
+# Modified Date
+Date = 2019-12-06;
+
+
+# Debug LED GPIO
+# Disabled by default
+# Notes:
+# Teensy 3 - gpio(C,5)
+# McHCK - gpio(B,16)
+# kii v1 (IC60) - gpio(A,19)
+# kii v2 (Infinity Ergodox, WhiteFox, K-Type) - gpio(A,5)
+# kii v3 (Kira) - gpio(B,0)
+ledDebugPin => DebugLED_ErrorPin_define;
+ledDebugPin = "{}";
+
+# Inverse LED
+# Some debug LEDs are pull-down instead of pull-up to turn on
+ledDebugInverse => DebugLED_Inverse_define;
+ledDebugInverse = 0;

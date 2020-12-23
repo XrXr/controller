@@ -1,16 +1,16 @@
-/* Copyright (C) 2014-2018 by Jacob Alexander
+/* Copyright (C) 2014-2020 by Jacob Alexander
  *
  * This file is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
+ * it under the terms of the GNU Lesser General Public License as published by
  * the Free Software Foundation, either version 3 of the License, or
  * (at your option) any later version.
  *
  * This file is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+ * GNU Lesser General Public License for more details.
  *
- * You should have received a copy of the GNU General Public License
+ * You should have received a copy of the GNU Lesser General Public License
  * along with this file.  If not, see <http://www.gnu.org/licenses/>.
  */
 
@@ -27,7 +27,7 @@
 #include <scan_loop.h>
 
 // Keymaps
-#include "usb_hid.h"
+#include <usb_hid.h> // Generated using kll (and hid-io/layouts) at compile time, in build directory
 #include <generatedKeymap.h> // Generated using kll at compile time, in build directory
 
 // Connect Includes
@@ -50,6 +50,7 @@
 
 // ----- Function Declarations -----
 
+void cliFunc_capDebug  ( char* args );
 void cliFunc_capList   ( char* args );
 void cliFunc_capSelect ( char* args );
 void cliFunc_keyHold   ( char* args );
@@ -74,6 +75,7 @@ void Macro_showTriggerType( TriggerType type );
 // ----- Variables -----
 
 // Macro Module command dictionary
+CLIDict_Entry( capDebug,    "Prints capability debug message before calling, with trigger conditions." );
 CLIDict_Entry( capList,     "Prints an indexed list of all non USB keycode capabilities." );
 CLIDict_Entry( capSelect,   "Triggers the specified capabilities. First two args are state and stateType." NL "\t\t\033[35mK11\033[0m Keyboard Capability 0x0B" );
 CLIDict_Entry( keyHold,     "Send key-hold events to the macro module. Duplicates have undefined behaviour." NL "\t\t\033[35mS10\033[0m Scancode 0x0A" );
@@ -91,6 +93,7 @@ CLIDict_Entry( posList,     "List physical key positions by ScanCode." );
 CLIDict_Entry( voteDebug,   "Show results of TriggerEvent voting." );
 
 CLIDict_Def( macroCLIDict, "Macro Module Commands" ) = {
+	CLIDict_Item( capDebug ),
 	CLIDict_Item( capList ),
 	CLIDict_Item( capSelect ),
 	CLIDict_Item( keyHold ),
@@ -109,6 +112,9 @@ CLIDict_Def( macroCLIDict, "Macro Module Commands" ) = {
 	{ 0, 0, 0 } // Null entry for dictionary end
 };
 
+
+// Capability debug flag - If set, shows the name of the capability when before it is called
+extern uint8_t capDebugMode;
 
 // Layer debug flag - If set, displays any changes to layers and the full layer stack on change
 extern uint8_t layerDebugMode;
@@ -130,6 +136,9 @@ uint8_t macroPauseMode;
 
 // Macro step counter - If non-zero, the step counter counts down every time the macro module does one processing loop
 uint16_t macroStepCounter;
+
+// Macro rotation store - Each store is indexed, and is initialized to 0
+static uint8_t Macro_rotation_store[256]; // TODO (HaaTa): Use KLL to determine max usage (or dynamically size)
 
 
 // Latency resource
@@ -161,6 +170,51 @@ const uint8_t ScheduleStateSize = ScheduleStateSize_define;
 
 
 // ----- Capabilities -----
+
+// Rotation capability
+// Maintains state and fires of a rotation event trigger
+void Macro_rotate_capability( TriggerMacro *trigger, uint8_t state, uint8_t stateType, uint8_t *args )
+{
+	CapabilityState cstate = KLL_CapabilityState( state, stateType );
+
+	switch ( cstate )
+	{
+	case CapabilityState_Initial:
+		// Only use on press
+		break;
+	case CapabilityState_Debug:
+		// Display capability name
+		print("Macro_rotate()");
+		return;
+	default:
+		return;
+	}
+
+	// Get storage index from arguments
+	uint8_t index = args[0];
+	// Get increment from arguments
+	int8_t increment = (int8_t)args[1];
+
+	// Trigger rotation
+	Macro_rotationState( index, increment );
+}
+
+// No-op capability (None)
+void Macro_none_capability( TriggerMacro *trigger, uint8_t state, uint8_t stateType, uint8_t *args )
+{
+	CapabilityState cstate = KLL_CapabilityState( state, stateType );
+
+	switch ( cstate )
+	{
+	case CapabilityState_Debug:
+		// Display capability name
+		print("Macro_none()");
+		return;
+	default:
+		break;
+	}
+
+}
 
 // Test Thread-safe Capability
 // Capability used to test a thread-safe result
@@ -223,7 +277,7 @@ void Macro_testThreadUnsafe_capability( TriggerMacro *trigger, uint8_t state, ui
 void Macro_showScheduleType( ScheduleState state )
 {
 	// State types
-	switch ( state )
+	switch ( state & 0x0F )
 	{
 	case ScheduleType_P:
 	//case ScheduleType_A:
@@ -267,12 +321,32 @@ void Macro_showScheduleType( ScheduleState state )
 
 	default:
 		print("\033[1;31mINVALID\033[0m");
+		printInt8( state & 0x0F );
+		break;
+	}
+
+	// Check for Shift/Latch/Lock type
+	switch ( state & 0xF0 )
+	{
+	case ScheduleType_Shift:
+		print("Sh");
+		break;
+
+	case ScheduleType_Latch:
+		print("La");
+		break;
+
+	case ScheduleType_Lock:
+		print("Lo");
+		break;
+
+	default:
 		break;
 	}
 }
 
-// Shows a ScheduleParam
-void Macro_showScheduleParam( ScheduleParam *param, uint8_t analog )
+// Shows a Schedule
+void Macro_showSchedule( Schedule *param, uint8_t analog )
 {
 	// Analog
 	if ( analog )
@@ -290,20 +364,6 @@ void Macro_showScheduleParam( ScheduleParam *param, uint8_t analog )
 	printInt32( param->time.ms );
 	print(".");
 	printInt32( param->time.ticks );
-}
-
-// Shows a Schedule
-void Macro_showSchedule( Schedule *schedule, uint8_t analog )
-{
-	// Show first element
-	Macro_showScheduleParam( &schedule->params[0], analog );
-
-	// Iterate over each additional parameter of the schedule
-	for ( uint8_t c = 1; c < schedule->count; c++ )
-	{
-		print(",");
-		Macro_showScheduleParam( &schedule->params[c], analog );
-	}
 }
 
 // Shows a TriggerType
@@ -341,6 +401,44 @@ void Macro_showTriggerType( TriggerType type )
 		print("Layer");
 		break;
 
+	// Animation
+	case TriggerType_Animation1:
+	case TriggerType_Animation2:
+	case TriggerType_Animation3:
+	case TriggerType_Animation4:
+		print("Animation");
+		break;
+
+	// Sleep
+	case TriggerType_Sleep1:
+		print("Sleep");
+		break;
+
+	// Resume
+	case TriggerType_Resume1:
+		print("Resume");
+		break;
+
+	// Inactive
+	case TriggerType_Inactive1:
+		print("Inactive");
+		break;
+
+	// Active
+	case TriggerType_Active1:
+		print("Active");
+		break;
+
+	// Rotation
+	case TriggerType_Rotation1:
+		print("Rotation");
+		break;
+
+	// Dial
+	case TriggerType_Dial1:
+		print("Dial");
+		break;
+
 	// Invalid
 	default:
 		print("INVALID");
@@ -361,7 +459,21 @@ void Macro_showTriggerEvent( TriggerEvent *event )
 	print(" ");
 
 	// Show state
-	Macro_showScheduleType( event->state );
+	switch ( event->type )
+	{
+	case TriggerType_Analog1:
+	case TriggerType_Analog2:
+	case TriggerType_Analog3:
+	case TriggerType_Analog4:
+	case TriggerType_Rotation1:
+	case TriggerType_Dial1:
+		printInt8( event->state );
+		break;
+
+	default:
+		Macro_showScheduleType( event->state );
+		break;
+	}
 	print(" ");
 
 	// Show index number
@@ -403,6 +515,7 @@ uint8_t Macro_pressReleaseAdd( void *trigger_ptr )
 	case TriggerType_Switch2:
 	case TriggerType_Switch3:
 	case TriggerType_Switch4:
+	case TriggerType_LED1:
 		switch ( trigger->state )
 		{
 		case ScheduleType_P:
@@ -411,7 +524,7 @@ uint8_t Macro_pressReleaseAdd( void *trigger_ptr )
 		case ScheduleType_O:
 			break;
 		default:
-			erro_msg("Invalid key state - ");
+			erro_print("Invalid key state - ");
 			error = 1;
 			break;
 		}
@@ -421,11 +534,23 @@ uint8_t Macro_pressReleaseAdd( void *trigger_ptr )
 	case TriggerType_Analog2:
 	case TriggerType_Analog3:
 	case TriggerType_Analog4:
+	case TriggerType_Rotation1:
+	case TriggerType_Dial1:
+		break;
+
+	case TriggerType_Animation1:
+	case TriggerType_Animation2:
+	case TriggerType_Animation3:
+	case TriggerType_Animation4:
+	case TriggerType_Sleep1:
+	case TriggerType_Resume1:
+	case TriggerType_Active1:
+	case TriggerType_Inactive1:
 		break;
 
 	// Invalid TriggerGuide type for Interconnect
 	default:
-		erro_msg("Invalid type - ");
+		erro_print("Invalid type - ");
 		error = 1;
 		break;
 	}
@@ -433,7 +558,7 @@ uint8_t Macro_pressReleaseAdd( void *trigger_ptr )
 	// Check if ScanCode is out of range
 	if ( trigger->index > MaxScanCode_KLL )
 	{
-		warn_msg("ScanCode is out of range/not defined - ");
+		warn_print("ScanCode is out of range/not defined - ");
 		error = 1;
 	}
 
@@ -506,7 +631,7 @@ void Macro_keyState( uint16_t scanCode, uint8_t state )
 		// Check if ScanCode is out of range
 		if ( scanCode > MaxScanCode_KLL )
 		{
-			warn_msg("ScanCode is out of range/not defined: ");
+			warn_print("ScanCode is out of range/not defined: ");
 			printInt16( scanCode );
 			print( NL );
 			return;
@@ -631,7 +756,7 @@ void Macro_animationState( uint16_t animationIndex, uint8_t state )
 		// Check if animation index is out of range
 		if ( animationIndex > AnimationNum_KLL )
 		{
-			warn_msg("AnimationIndex is out of range/not defined: ");
+			warn_print("AnimationIndex is out of range/not defined: ");
 			printInt16( animationIndex );
 			print( NL );
 			return;
@@ -680,7 +805,8 @@ void Macro_layerState( uint16_t layerIndex, uint8_t state )
 	TriggerType type = TriggerType_Layer1;
 
 	// Only add to macro trigger list if one of three states
-	switch ( state )
+	// Mask around Shift/Latch/Lock state
+	switch ( state & ScheduleType_D )
 	{
 	case ScheduleType_A:  // Activate
 	case ScheduleType_On: // On
@@ -688,7 +814,7 @@ void Macro_layerState( uint16_t layerIndex, uint8_t state )
 		// Check if layer is out of range
 		if ( layerIndex > LayerNum_KLL )
 		{
-			warn_msg("LayerIndex is out of range/not defined: ");
+			warn_print("LayerIndex is out of range/not defined: ");
 			printInt16( layerIndex );
 			print( NL );
 			return;
@@ -721,6 +847,182 @@ void Macro_layerState( uint16_t layerIndex, uint8_t state )
 		macroTriggerEventBufferSize++;
 		break;
 	}
+}
+
+
+// Update Time State trigger
+// Only valid with Sleep/Resume and Inactive/Active triggers
+// States:
+//   * 0x00 - Off
+//   * 0x01 - Activate
+//   * 0x02 - On
+//   * 0x03 - Deactivate
+void Macro_timeState( uint8_t type, uint16_t cur_time, uint8_t state )
+{
+	// Make sure this is a valid trigger type
+	switch ( type )
+	{
+	case TriggerType_Sleep1:
+	case TriggerType_Resume1:
+	case TriggerType_Inactive1:
+	case TriggerType_Active1:
+		break;
+
+	// Ignore if not the correct type
+	default:
+		warn_print("Invalid time state trigger update: ");
+		printHex( type );
+		print(NL);
+		return;
+	}
+
+	// cur_time is controlled by the caller
+	// When this function called the trigger is active
+	if ( cur_time > 0xFF )
+	{
+		warn_print("Only 255 time instances are accepted for a time state trigger: ");
+		printInt16( cur_time );
+		print(NL);
+		return;
+	}
+	uint8_t index = cur_time;
+
+	// Only add to macro trigger list if one of three states
+	switch ( state )
+	{
+	case ScheduleType_A:  // Activate
+	case ScheduleType_On: // On
+	case ScheduleType_D:  // Deactivate
+		macroTriggerEventBuffer[ macroTriggerEventBufferSize ].index = index;
+		macroTriggerEventBuffer[ macroTriggerEventBufferSize ].state = state;
+		macroTriggerEventBuffer[ macroTriggerEventBufferSize ].type  = type;
+		macroTriggerEventBufferSize++;
+		break;
+	}
+}
+
+
+// Rotation state update
+// Queues up a rotation trigger event
+// States:
+//   * 0x00 - Off
+//   * 0x01 - Activate
+//   * 0x02 - On
+//   * 0x03 - Deactivate
+void Macro_rotationState( uint8_t index, int8_t increment )
+{
+	// For now, always Rotation1
+	uint8_t type = TriggerType_Rotation1;
+
+	// If index is invalid, ignore
+	if ( index > RotationNum )
+	{
+		return;
+	}
+
+	// State is used as the increment position
+	int16_t position = Macro_rotation_store[index] + increment;
+
+	// If first starting, the first rotation is 0
+	if ( Macro_rotation_store[index] == 255 )
+	{
+		position = 0;
+	}
+
+	// Wrap-around
+	// May have to wrap-around multiple times
+	while ( position > Rotation_MaxParameter[index] )
+	{
+		position -= Rotation_MaxParameter[index] + 1;
+	}
+
+	// Reverse Wrap-around
+	if ( position < 0 )
+	{
+		// May have to wrap-around multiple times
+		while ( position * -1 > Rotation_MaxParameter[index] )
+		{
+			position += Rotation_MaxParameter[index] - 1;
+		}
+
+		// Do wrap-around
+		position += Rotation_MaxParameter[index] - 1;
+
+	}
+	Macro_rotation_store[index] = position;
+
+	// Queue event
+	macroTriggerEventBuffer[ macroTriggerEventBufferSize ].index = index;
+	macroTriggerEventBuffer[ macroTriggerEventBufferSize ].state = position;
+	macroTriggerEventBuffer[ macroTriggerEventBufferSize ].type  = type;
+	macroTriggerEventBufferSize++;
+}
+
+
+// Dial state update
+// Queues up a dial trigger event
+// States:
+//  * 0x00 - Off
+//  * 0x01 - Increase
+//  * 0x02 - Decrease
+void Macro_dialState( uint8_t index, uint8_t state )
+{
+	uint8_t type = TriggerType_Dial1;
+
+	// Queue event
+	switch ( state )
+	{
+	case ScheduleType_Inc: // Increment
+	case ScheduleType_Dec: // Decrement
+		macroTriggerEventBuffer[ macroTriggerEventBufferSize ].index = index;
+		macroTriggerEventBuffer[ macroTriggerEventBufferSize ].state = state;
+		macroTriggerEventBuffer[ macroTriggerEventBufferSize ].type  = type;
+		macroTriggerEventBufferSize++;
+		break;
+	}
+}
+
+
+// [In]Activity detected, do TickStore update and signal generation
+// Returns 1 if a signal is sent
+uint8_t Macro_tick_update( TickStore *store, uint8_t type )
+{
+	uint32_t ticks = Time_tick_update( store );
+	uint8_t signal_sent = 0;
+
+	// Check for a fresh store (separate signal)
+	if ( store->fresh_store )
+	{
+		Time_tick_reset( store );
+
+		// Unset fresh store
+		store->fresh_store = 0;
+
+		// Send initial activity signal
+		Macro_timeState( type, 0, ScheduleType_A );
+		signal_sent = 1;
+		store->ticks_since_start++;
+	}
+
+	// No need to update if there were no ticks
+	if ( ticks == 0 )
+	{
+		goto done;
+	}
+
+	// Check to see if we need to signal
+	for (
+		uint16_t signal = store->ticks_since_start - ticks;
+		signal < store->ticks_since_start;
+		signal++
+	)
+	{
+		// Send queued up signals
+		Macro_timeState( type, signal, ScheduleStateSize_define );
+	}
+
+done:
+	return signal_sent;
 }
 
 
@@ -773,6 +1075,10 @@ void Macro_periodic()
 			{
 			// Normal (Press/Hold/Release)
 			case TriggerType_Switch1:
+			case TriggerType_Switch2:
+			case TriggerType_Switch3:
+			case TriggerType_Switch4:
+			case TriggerType_LED1:
 				// Decide what to do based on the current state
 				switch ( macroInterconnectCache[ c ].state )
 				{
@@ -792,10 +1098,23 @@ void Macro_periodic()
 				}
 				break;
 
+			case TriggerType_Rotation1:
+			case TriggerType_Dial1:
+			case TriggerType_Animation1:
+			case TriggerType_Animation2:
+			case TriggerType_Animation3:
+			case TriggerType_Animation4:
+			case TriggerType_Sleep1:
+			case TriggerType_Resume1:
+			case TriggerType_Active1:
+			case TriggerType_Inactive1:
+				// Do not re-add
+				break;
+
 			// Not implemented
 			default:
-				erro_msg("Interconnect Trigger Event Type - Not Implemented ");
-				printInt8( macroInterconnectCache[ c ].type );
+				erro_print("Interconnect Trigger Event Type - Not Implemented ");
+				printHex( macroInterconnectCache[ c ].type );
 				print( NL );
 				break;
 			}
@@ -826,12 +1145,14 @@ void Macro_periodic()
 		// No scancodes defined
 		if ( MaxScanCode_KLL == 0 )
 		{
-			warn_print("No scancodes defined! Check your BaseMap!");
+#if NoneScanModule_define == 0
+			warn_printNL("No scancodes defined! Check your BaseMap!");
+#endif
 		}
 		// Bug!
 		else
 		{
-			erro_msg("Macro Trigger Event Overflow! Serious Bug! ");
+			erro_print("Macro Trigger Event Overflow! Serious Bug! ");
 			printInt16( macroTriggerEventBufferSize );
 			print( NL );
 			macroTriggerEventBufferSize = 0;
@@ -846,21 +1167,25 @@ void Macro_periodic()
 
 		// Proceed, decrementing the step counter
 		macroStepCounter--;
-		dbug_print("Macro Step");
+		dbug_printNL("Macro Step");
 	}
 
 	// Process Trigger Macros
 	Trigger_process();
 
 
+	// Store events processed
+	var_uint_t macroTriggerEventBufferSize_processed = macroTriggerEventBufferSize;
+
+	// Reset TriggerList buffer
+	macroTriggerEventBufferSize = 0;
+
+
 	// Process result macros
 	Result_process();
 
 	// Signal buffer that we've used it
-	Scan_finishedWithMacro( macroTriggerEventBufferSize );
-
-	// Reset TriggerList buffer
-	macroTriggerEventBufferSize = 0;
+	Scan_finishedWithMacro( macroTriggerEventBufferSize_processed );
 
 #if defined(_host_)
 	// Signal host to read layer state
@@ -903,6 +1228,9 @@ inline void Macro_setup()
 	// Make sure macro trigger event buffer is empty
 	macroTriggerEventBufferSize = 0;
 
+	// Initial rotation store to 255s
+	memset( Macro_rotation_store, 255, sizeof(Macro_rotate_capability) );
+
 	// Setup Layers
 	Layer_setup();
 
@@ -919,10 +1247,20 @@ inline void Macro_setup()
 
 // ----- CLI Command Functions -----
 
+void cliFunc_capDebug( char* args )
+{
+	// Toggle layer debug mode
+	capDebugMode = capDebugMode ? 0 : 1;
+
+	print( NL );
+	info_print("Capability Debug Mode: ");
+	printInt8( capDebugMode );
+}
+
 void cliFunc_capList( char* args )
 {
 	print( NL );
-	info_msg("Capabilities List ");
+	info_print("Capabilities List ");
 	printHex( CapabilitiesNum );
 
 	// Iterate through all of the capabilities and display them
@@ -987,7 +1325,7 @@ void cliFunc_capSelect( char* args )
 		{
 			// Indicate that the capability was called
 			print( NL );
-			info_msg("K");
+			info_print("K");
 			printInt8( cap );
 			print(" - ");
 			printHex( argSet[0] );
@@ -1004,8 +1342,8 @@ void cliFunc_capSelect( char* args )
 				if ( CapabilitiesList[ cap ].func == (const void*)Output_flashMode_capability )
 				{
 					print( NL );
-					warn_print("flashModeEnabled not set, cancelling firmware reload...");
-					info_msg("Set flashModeEnabled to 1 in your kll configuration.");
+					warn_printNL("flashModeEnabled not set, cancelling firmware reload...");
+					info_print("Set flashModeEnabled to 1 in your kll configuration.");
 					return;
 				}
 			}
@@ -1107,14 +1445,14 @@ void cliFunc_layerDebug( char *args )
 	layerDebugMode = layerDebugMode ? 0 : 1;
 
 	print( NL );
-	info_msg("Layer Debug Mode: ");
+	info_print("Layer Debug Mode: ");
 	printInt8( layerDebugMode );
 }
 
 void cliFunc_layerList( char* args )
 {
 	print( NL );
-	info_msg("Layer List");
+	info_print("Layer List");
 
 	// Iterate through all of the layers and display them
 	for ( index_uint_t layer = 0; layer < LayerNum; layer++ )
@@ -1177,7 +1515,7 @@ void cliFunc_layerState( char* args )
 
 			// Display operation (to indicate that it worked)
 			print( NL );
-			info_msg("Setting Layer L");
+			info_print("Setting Layer L");
 			printInt8( arg1 );
 			print(" to - ");
 			printHex( arg2 );
@@ -1222,7 +1560,7 @@ void cliFunc_macroDebug( char* args )
 	}
 
 	print( NL );
-	info_msg("Macro Debug Mode: ");
+	info_print("Macro Debug Mode: ");
 	printInt8( macroDebugMode );
 }
 
@@ -1230,7 +1568,7 @@ void cliFunc_macroList( char* args )
 {
 	// Show pending key events
 	print( NL );
-	info_msg("Pending Key Events: ");
+	info_print("Pending Key Events: ");
 	printInt16( (uint16_t)macroTriggerEventBufferSize );
 	print(" : ");
 	for ( var_uint_t key = 0; key < macroTriggerEventBufferSize; key++ )
@@ -1241,7 +1579,7 @@ void cliFunc_macroList( char* args )
 
 	// Show pending trigger macros
 	print( NL );
-	info_msg("Pending Trigger Macros: ");
+	info_print("Pending Trigger Macros: ");
 	printInt16( (uint16_t)macroTriggerMacroPendingListSize );
 	print(" : ");
 	for ( var_uint_t macro = 0; macro < macroTriggerMacroPendingListSize; macro++ )
@@ -1252,7 +1590,7 @@ void cliFunc_macroList( char* args )
 
 	// Show pending result macros
 	print( NL );
-	info_msg("Pending Result Macros: ");
+	info_print("Pending Result Macros: ");
 	printInt16( (uint16_t)macroResultMacroPendingList.size );
 	print(" : ");
 	for ( var_uint_t macro = 0; macro < macroResultMacroPendingList.size; macro++ )
@@ -1263,17 +1601,17 @@ void cliFunc_macroList( char* args )
 
 	// Show available trigger macro indices
 	print( NL );
-	info_msg("Trigger Macros Range: T0 -> T");
+	info_print("Trigger Macros Range: T0 -> T");
 	printInt16( (uint16_t)TriggerMacroNum - 1 ); // Hopefully large enough :P (can't assume 32-bit)
 
 	// Show available result macro indices
 	print( NL );
-	info_msg("Result  Macros Range: R0 -> R");
+	info_print("Result  Macros Range: R0 -> R");
 	printInt16( (uint16_t)ResultMacroNum - 1 ); // Hopefully large enough :P (can't assume 32-bit)
 
 	// Show Trigger to Result Macro Links
 	print( NL );
-	info_msg("Trigger : Result Macro Pairs");
+	info_print("Trigger : Result Macro Pairs");
 	for ( var_uint_t macro = 0; macro < TriggerMacroNum; macro++ )
 	{
 		print( NL );
@@ -1290,7 +1628,7 @@ void cliFunc_macroProc( char* args )
 	macroPauseMode = macroPauseMode ? 0 : 1;
 
 	print( NL );
-	info_msg("Macro Processing Mode: ");
+	info_print("Macro Processing Mode: ");
 	printInt8( macroPauseMode );
 }
 
@@ -1305,7 +1643,7 @@ void macroDebugShowTrigger( var_uint_t index )
 	TriggerMacroRecord *record = &TriggerMacroRecordList[ index ];
 
 	print( NL );
-	info_msg("Trigger Macro Index: ");
+	info_print("Trigger Macro Index: ");
 	printInt16( (uint16_t)index ); // Hopefully large enough :P (can't assume 32-bit)
 	print( NL );
 
@@ -1379,7 +1717,7 @@ void macroDebugShowResult( var_uint_t index )
 	const ResultMacro *macro = &ResultMacroList[ index ];
 
 	print( NL );
-	info_msg("Result Macro Index: ");
+	info_print("Result Macro Index: ");
 	printInt16( (uint16_t)index ); // Hopefully large enough :P (can't assume 32-bit)
 	print( NL );
 
@@ -1567,7 +1905,7 @@ void cliFunc_voteDebug( char* args )
 	}
 
 	print( NL );
-	info_msg("Vote Debug Mode: ");
+	info_print("Vote Debug Mode: ");
 	printInt8( voteDebugMode );
 }
 

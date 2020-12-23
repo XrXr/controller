@@ -1,4 +1,4 @@
-/* Copyright (C) 2011-2017 by Jacob Alexander
+/* Copyright (C) 2011-2020 by Jacob Alexander
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -22,6 +22,7 @@
 // ----- Includes -----
 
 // Compiler Includes
+#include <stdbool.h>
 #include <Lib/OutputLib.h>
 
 // Project Includes
@@ -76,6 +77,11 @@ uint16_t Output_ExtCurrent_Available;
 // Initially 100 mA, but may be negotiated higher (e.g. 500 mA)
 uint16_t Output_USBCurrent_Available;
 
+// Sleep mode
+// Generally false, but is set to true when attempting to enter deep sleep
+// Initialization will be run again, so no need to unset
+bool Output_SleepMode;
+
 
 
 // ----- Capabilities -----
@@ -99,6 +105,8 @@ void Output_sysCtrlSend_capability( TriggerMacro *trigger, uint8_t state, uint8_
 void Output_usbCodeSend_capability( TriggerMacro *trigger, uint8_t state, uint8_t stateType, uint8_t *args )
 	__attribute__ ((weak, alias("Output_ignored_capability")));
 void Output_usbMouse_capability( TriggerMacro *trigger, uint8_t state, uint8_t stateType, uint8_t *args )
+	__attribute__ ((weak, alias("Output_ignored_capability")));
+void Output_usbMouseWheel_capability( TriggerMacro *trigger, uint8_t state, uint8_t stateType, uint8_t *args )
 	__attribute__ ((weak, alias("Output_ignored_capability")));
 #endif
 
@@ -131,6 +139,12 @@ inline void OutputGen_setup()
 	Output_DebugMode = 0;
 	Output_ExtCurrent_Available = 0;
 	Output_USBCurrent_Available = 0;
+	Output_SleepMode = false;
+
+#if defined(_sam_)
+	// HACK: Will be corrected when usb support is added
+	Output_USBCurrent_Available = 500;
+#endif
 }
 
 
@@ -147,7 +161,7 @@ void Output_update_usb_current( unsigned int current )
 
 	/* XXX Affects sleep states due to USB messages
 	unsigned int total_current = Output_current_available();
-	info_msg("USB Available Current Changed. Total Available: ");
+	info_print("USB Available Current Changed. Total Available: ");
 	printInt32( total_current );
 	print(" mA" NL);
 	*/
@@ -169,12 +183,26 @@ void Output_update_external_current( unsigned int current )
 	Output_ExtCurrent_Available = current;
 
 	unsigned int total_current = Output_current_available();
-	info_msg("External Available Current Changed. Total Available: ");
+	info_print("External Available Current Changed. Total Available: ");
 	printInt32( total_current );
 	print(" mA" NL);
 
 	// Send new total current to the Scan Modules
 	Scan_currentChange( Output_current_available() );
+}
+
+
+// Update and prepare for sleep mode
+// There is no undo for this, the MCU must be reinitialized
+void Output_prepare_sleep_mode()
+{
+	// Set USB and external current to 0
+	Output_USBCurrent_Available = 0;
+	Output_ExtCurrent_Available = 0;
+
+	info_printNL("Preparing Sleep Mode...");
+	Scan_currentChange( Output_current_available() );
+	info_printNL("Sleep Mode Preparations Complete.");
 }
 
 
@@ -192,7 +220,7 @@ unsigned int Output_current_available()
 	// XXX If the total available current is still 0
 	// Set to 100 mA, which is generally a safe assumption at startup
 	// before we've been able to determine actual available current
-	if ( total_current == 0 )
+	if ( total_current == 0 && !Output_SleepMode)
 	{
 		total_current = 100;
 	}
@@ -206,8 +234,19 @@ unsigned int Output_current_available()
 
 void cliFunc_current( char* args )
 {
+	// Parse number from argument
+	//  NOTE: Only first argument is used
+	char* arg1Ptr;
+	char* arg2Ptr;
+	CLI_argumentIsolation( args, &arg1Ptr, &arg2Ptr );
+
+	if ( arg1Ptr[0] != '\0' )
+	{
+		Output_update_external_current( (unsigned int)numToInt( arg1Ptr ) );
+	}
+
 	print( NL );
-	info_msg("Current available: ");
+	info_print("Current available: ");
 	printInt16( Output_current_available() );
 	print(" mA");
 }

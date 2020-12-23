@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # This is a build and test script used to test KLL functionality
 # It runs on the host system and doesn't require a device to flash onto
-# Jacob Alexander 2016-2017
+# Jacob Alexander 2016-2018
 
 
 
@@ -21,7 +21,7 @@ BaseMap="scancode_map"
 # This is the default layer of the keyboard
 # NOTE: To combine kll files into a single layout, separate them by spaces
 # e.g.  DefaultMap="mylayout mylayoutmod"
-DefaultMap="animation_test stdFuncMap"
+DefaultMap="ic60/macro_test animation_test klltest_default stdFuncMap"
 
 # This is where you set the additional layers
 # NOTE: Indexing starts at 1
@@ -56,6 +56,10 @@ Chip="host"
 # Compiler Selection
 Compiler="gcc"
 
+# Enable run-time sanitizers
+EnableSanitizer=true
+CMakeExtraArgs="-DSANITIZER=1"
+
 
 
 ########################
@@ -73,6 +77,12 @@ fi
 # Override CMakeLists path
 CMakeListsPath="../../.."
 
+# Not Supported on Cygwin
+if [[ $(uname -s) == MINGW32_NT* ]] || [[ $(uname -s) == CYGWIN* ]]; then
+	echo "macrotest.bash is unsupported on Cygwin. As are any host-side kll tests."
+	exit 0
+fi
+
 # Load the library
 source "../cmake.bash"
 
@@ -81,12 +91,6 @@ source "../common.bash"
 
 # Run tests
 cd "${BuildPath}"
-
-# Not Supported on Cygwin
-if [[ $(uname -s) == MINGW32_NT* ]] || [[ $(uname -s) == CYGWIN* ]]; then
-	echo "macrotest.bash is unsupported on Cygwin. As are any host-side kll tests."
-	exit 0
-fi
 
 cmd python3 Tests/kll.py
 

@@ -1,7 +1,7 @@
 /* Teensyduino Core Library
  * http://www.pjrc.com/teensy/
  * Copyright (c) 2013 PJRC.COM, LLC.
- * Modifications by Jacob Alexander 2013-2018
+ * Modifications by Jacob Alexander 2013-2019
  *
  * Permission is hereby granted, free of charge, to any person obtaining
  * a copy of this software and associated documentation files (the
@@ -116,7 +116,7 @@ void usb_keyboard_send( USBKeys *buffer, uint8_t protocol )
 	{
 		if ( !usb_configuration )
 		{
-			erro_print("USB not configured...");
+			erro_printNL("USB not configured...");
 			return;
 		}
 
@@ -164,10 +164,10 @@ void usb_keyboard_send( USBKeys *buffer, uint8_t protocol )
 			transmit_previous_timeout = 1;
 			buffer->changed = USBKeyChangeState_None; // Indicate packet lost
 			#if enableDeviceRestartOnUSBTimeout == 1
-			warn_print("USB Transmit Timeout...restarting device");
+			warn_printNL("USB Transmit Timeout...restarting device");
 			usb_device_software_reset();
 			#else
-			warn_print("USB Transmit Timeout...auto-restart disabled");
+			warn_printNL("USB Transmit Timeout...auto-restart disabled");
 			#endif
 			// Try to wakeup
 			return;
@@ -181,45 +181,27 @@ void usb_keyboard_send( USBKeys *buffer, uint8_t protocol )
 	// Pointer to USB tx packet buffer
 	uint8_t *tx_buf = tx_packet->buf;
 
-	// Check system control keys
-	if ( buffer->changed & USBKeyChangeState_System )
+	// Check system control and consumer control keys
+	if ( buffer->changed & USBKeyChangeState_System || buffer->changed & USBKeyChangeState_Consumer )
 	{
 		if ( Output_DebugMode )
 		{
 			USB_SysCtrlDebug( buffer );
-		}
-
-		// Store update for idle packet
-		USBKeys_idle.sys_ctrl = buffer->sys_ctrl;
-
-		*tx_buf++ = 0x02; // ID
-		*tx_buf   = buffer->sys_ctrl;
-		tx_packet->len = 2;
-
-		// Send USB Packet
-		usb_tx( SYS_CTRL_ENDPOINT, tx_packet );
-		buffer->changed &= ~USBKeyChangeState_System; // Mark sent
-		return;
-	}
-
-	// Check consumer control keys
-	if ( buffer->changed & USBKeyChangeState_Consumer )
-	{
-		if ( Output_DebugMode )
-		{
 			USB_ConsCtrlDebug( buffer );
 		}
 
 		// Store update for idle packet
+		USBKeys_idle.sys_ctrl = buffer->sys_ctrl;
 		USBKeys_idle.cons_ctrl = buffer->cons_ctrl;
 
-		*tx_buf++ = 0x03; // ID
 		*tx_buf++ = (uint8_t)(buffer->cons_ctrl & 0x00FF);
-		*tx_buf   = (uint8_t)(buffer->cons_ctrl >> 8);
+		*tx_buf++ = (uint8_t)(buffer->cons_ctrl >> 8);
+		*tx_buf   = buffer->sys_ctrl - 0x80;
 		tx_packet->len = 3;
 
 		// Send USB Packet
 		usb_tx( SYS_CTRL_ENDPOINT, tx_packet );
+		buffer->changed &= ~USBKeyChangeState_System; // Mark sent
 		buffer->changed &= ~USBKeyChangeState_Consumer; // Mark sent
 		return;
 	}
@@ -253,7 +235,7 @@ void usb_keyboard_send( USBKeys *buffer, uint8_t protocol )
 	case 1:
 		if ( Output_DebugMode )
 		{
-			dbug_msg("NKRO USB: ");
+			dbug_print("NKRO USB: ");
 		}
 
 		// Standard HID Keyboard
@@ -273,27 +255,18 @@ void usb_keyboard_send( USBKeys *buffer, uint8_t protocol )
 			tx_packet->len = 0;
 
 			// Modifiers
-			*tx_buf++ = 0x01; // ID
 			*tx_buf++ = buffer->modifiers;
-			tx_packet->len += 2;
-
-			// 4-49 (first 6 bytes)
-			memcpy( tx_buf, buffer->keys, 6 );
-			tx_buf += 6;
-			tx_packet->len += 6;
-
-			// 51-155 (Middle 14 bytes)
-			memcpy( tx_buf, buffer->keys + 6, 14 );
-			tx_buf += 14;
-			tx_packet->len += 14;
-
-			// 157-164 (Next byte)
-			memcpy( tx_buf, buffer->keys + 20, 1 );
-			tx_buf += 1;
 			tx_packet->len += 1;
 
+			// 4-164 (first 21 bytes)
+			// 0-3 and 165-168 are masked by the descriptor (padding)
+			memcpy( tx_buf, buffer->keys, 21 );
+			tx_buf += 21;
+			tx_packet->len += 21;
+
 			// 176-221 (last 6 bytes)
-			memcpy( tx_buf, buffer->keys + 21, 6 );
+			// 222-223 are masked by the descriptor (padding)
+			memcpy( tx_buf, buffer->keys + 22, 6 );
 			tx_packet->len += 6;
 
 			// Send USB Packet

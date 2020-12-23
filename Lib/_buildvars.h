@@ -1,4 +1,4 @@
-/* Copyright (C) 2013-2017 by Jacob Alexander
+/* Copyright (C) 2013-2020 by Jacob Alexander
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -23,12 +23,14 @@
 
 // ----- Includes -----
 
+#include <stdint.h>
+
 
 
 // ----- Defines -----
 
 // Helpers
-#define _STR_HELPER(x)
+#define _STR_HELPER(x) #x
 #define _STR(x) _STR_HELPER(x)
 
 // You can change these to give your code its own name.
@@ -70,4 +72,14 @@
 #define VENDOR_ID               @VENDOR_ID@
 #define PRODUCT_ID              @PRODUCT_ID@
 #define BCD_VERSION             @Git_Commit_Number@
+
+
+
+// ----- Structs -----
+
+// This struct is stored in the user signature area and can be accessed by the bootloader
+typedef struct FirmwareInfo {
+	uint16_t revision;      // Build revision number
+	uint16_t reserved;      // RESERVED (user signature must be written in 32-bit chunks)
+} __attribute__((packed)) __attribute__((aligned(4))) FirmwareInfo;
 

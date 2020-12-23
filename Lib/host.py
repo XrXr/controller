@@ -2,19 +2,19 @@
 Host-Side Setup Routines for KLL
 '''
 
-# Copyright (C) 2016-2018 by Jacob Alexander
+# Copyright (C) 2016-2019 by Jacob Alexander
 #
 # This file is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
+# it under the terms of the GNU Lesser General Public License as published by
 # the Free Software Foundation, either version 3 of the License, or
 # (at your option) any later version.
 #
 # This file is distributed in the hope that it will be useful,
 # but WITHOUT ANY WARRANTY; without even the implied warranty of
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
+# GNU Lesser General Public License for more details.
 #
-# You should have received a copy of the GNU General Public License
+# You should have received a copy of the GNU Lesser General Public License
 # along with this file.  If not, see <http://www.gnu.org/licenses/>.
 
 ### Imports ###
@@ -385,8 +385,10 @@ class Control:
         global output
         scan = CustomLoader( "Scan", scan_module ).load_module("Scan")
         builtins.kiibohd_scan = scan
+        self.scan = scan
         output = CustomLoader( "Output", output_module ).load_module("Output")
         builtins.kiibohd_output = output
+        self.output = output
 
         # Build command and callback dictionaries
         self.build_command_list()

@@ -1,6 +1,15 @@
 #!/usr/bin/env bash
 # This script runs each of the bootloader build scripts
-# Jacob Alexander 2017
+# Jacob Alexander 2017-2018
+
+# If git tag is set, append to each copied firmware file
+git_tag=${git_tag:-""}
+isuffix="_bootloader.bin"
+if [[ "${git_tag}" != "" ]]; then
+	suffix=".${git_tag}.bootloader.bin"
+else
+	suffix=".bootloader.bin"
+fi
 
 
 
@@ -26,15 +35,21 @@ source "common.bash"
 ###########
 
 # Run builds
-cmd_cpy ./mk20dx128vlf5.bash   kiibohd_bootloader.bin bootloader/mk20dx128vlf5.bootloader.bin
-cmd_cpy ./mk20dx128vlh7.bash   kiibohd_bootloader.bin bootloader/mk20dx128vlh7.bootloader.bin
-cmd_cpy ./mk20dx256vlh7.bash   kiibohd_bootloader.bin bootloader/mk20dx256vlh7.bootloader.bin
-cmd_cpy ./mk22fx512avlh12.bash kiibohd_bootloader.bin bootloader/mk22fx512avlh12.bootloader.bin
-cmd_cpy ./ergodox.bash         kiibohd_bootloader.bin bootloader/ergodox.bootloader.bin
-cmd_cpy ./infinity.bash        kiibohd_bootloader.bin bootloader/infinity.bootloader.bin
-cmd_cpy ./infinity_led.bash    kiibohd_bootloader.bin bootloader/infinity_led.bootloader.bin
-cmd_cpy ./ktype.bash           kiibohd_bootloader.bin bootloader/ktype.bootloader.bin
-cmd_cpy ./whitefox.bash        kiibohd_bootloader.bin bootloader/whitefox.bootloader.bin
+test -d bootloader && rm -rf bootloader
+cmd_cpy "bash ./mk20dx128vlf5.bash"   kiibohd${isuffix} bootloader/mk20dx128vlf5${suffix}
+cmd_cpy "bash ./mk20dx256vlh7.bash"   kiibohd${isuffix} bootloader/mk20dx256vlh7${suffix}
+cmd_cpy "bash ./sam4s2a.bash"         kiibohd${isuffix} bootloader/sam4s8b${suffix}
+cmd_cpy "bash ./sam4s4b.bash"         kiibohd${isuffix} bootloader/sam4s8b${suffix}
+cmd_cpy "bash ./sam4s8b.bash"         kiibohd${isuffix} bootloader/sam4s8b${suffix}
+cmd_cpy "bash ./sam4s8c.bash"         kiibohd${isuffix} bootloader/sam4s8c${suffix}
+cmd_cpy "bash ./60v2.bash"            kiibohd${isuffix} bootloader/60v2${suffix}
+cmd_cpy "bash ./ergodox.bash"         kiibohd${isuffix} bootloader/ergodox${suffix}
+cmd_cpy "bash ./geminiduskdawn.bash"  kiibohd${isuffix} bootloader/geminiduskdawn${suffix}
+cmd_cpy "bash ./infinity.bash"        kiibohd${isuffix} bootloader/infinity${suffix}
+cmd_cpy "bash ./infinity_led.bash"    kiibohd${isuffix} bootloader/infinity_led${suffix}
+cmd_cpy "bash ./kira.bash"            kiibohd${isuffix} bootloader/kira${suffix}
+cmd_cpy "bash ./ktype.bash"           kiibohd${isuffix} bootloader/ktype${suffix}
+cmd_cpy "bash ./whitefox.bash"        kiibohd${isuffix} bootloader/whitefox${suffix}
 
 # Tally results
 result

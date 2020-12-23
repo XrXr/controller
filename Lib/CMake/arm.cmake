@@ -1,6 +1,6 @@
 ###| CMAKE Kiibohd Controller |###
 #
-# Jacob Alexander 2011-2018
+# Jacob Alexander 2011-2020
 # Due to this file's usefulness:
 #
 # Released into the Public Domain
@@ -102,9 +102,115 @@ set( COMPILER_SRCS
 	Lib/${CHIP_SUPPORT}.c
 	Lib/delay.c
 	Lib/entropy.c
+	Lib/gpio.c
 	Lib/periodic.c
+	Lib/sleep.c
+	Lib/storage.c
 	Lib/time.c
+	Lib/utf8.c
 )
+if ( "${CPU}" MATCHES "cortex-m4" )
+	list( APPEND COMPILER_SRCS
+		Lib/arm_cortex.c
+	)
+
+	# KLL Options
+	set( Device_KLL "${CMAKE_CURRENT_SOURCE_DIR}/Lib/arm_cortex.kll" )
+endif ()
+set( Device_KLL ${Device_KLL} "${CMAKE_CURRENT_SOURCE_DIR}/Lib/sleep.kll" )
+
+#| SAM Sources
+if ( "${CHIP_SUPPORT}" MATCHES "sam" )
+	list( APPEND COMPILER_SRCS
+		Lib/ASF/common/services/clock/sam4s/sysclk.c
+		Lib/ASF/common/utils/interrupt/interrupt_sam_nvic.c
+		Lib/ASF/sam/drivers/efc/efc.c
+		Lib/ASF/sam/drivers/pio/pio.c
+		Lib/ASF/sam/drivers/pmc/pmc.c
+		Lib/ASF/sam/drivers/supc/supc.c
+		Lib/ASF/sam/drivers/wdt/wdt.c
+		Lib/ASF/sam/utils/cmsis/sam4s/source/templates/system_sam4s.c
+		Lib/ASF/sam/services/flash_efc/flash_efc.c
+	)
+
+	# KLL Options
+	set( Device_KLL ${Device_KLL} "${CMAKE_CURRENT_SOURCE_DIR}/Lib/sam.kll" )
+endif ()
+
+#| NRF5 Sources
+if ( "${CHIP_SUPPORT}" MATCHES "nrf5" )
+	list( APPEND COMPILER_SRCS
+		Lib/nRF5_SDK/components/boards/boards.c
+		Lib/nRF5_SDK/components/libraries/atomic/nrf_atomic.c
+		Lib/nRF5_SDK/components/libraries/balloc/nrf_balloc.c
+		Lib/nRF5_SDK/components/libraries/experimental_section_vars/nrf_section_iter.c
+		Lib/nRF5_SDK/components/libraries/log/src/nrf_log_backend_rtt.c
+		Lib/nRF5_SDK/components/libraries/log/src/nrf_log_backend_serial.c
+		Lib/nRF5_SDK/components/libraries/log/src/nrf_log_backend_uart.c
+		Lib/nRF5_SDK/components/libraries/log/src/nrf_log_default_backends.c
+		Lib/nRF5_SDK/components/libraries/log/src/nrf_log_frontend.c
+		Lib/nRF5_SDK/components/libraries/log/src/nrf_log_str_formatter.c
+		Lib/nRF5_SDK/components/libraries/memobj/nrf_memobj.c
+		Lib/nRF5_SDK/components/libraries/pwr_mgmt/nrf_pwr_mgmt.c
+		Lib/nRF5_SDK/components/libraries/ringbuf/nrf_ringbuf.c
+		Lib/nRF5_SDK/components/libraries/strerror/nrf_strerror.c
+		Lib/nRF5_SDK/components/libraries/util/app_error.c
+		Lib/nRF5_SDK/components/libraries/util/app_error_handler_gcc.c
+		Lib/nRF5_SDK/components/libraries/util/app_error_weak.c
+		Lib/nRF5_SDK/components/libraries/util/app_util_platform.c
+		Lib/nRF5_SDK/components/libraries/util/nrf_assert.c
+		Lib/nRF5_SDK/external/fprintf/nrf_fprintf.c
+		Lib/nRF5_SDK/external/fprintf/nrf_fprintf_format.c
+		Lib/nRF5_SDK/external/segger_rtt/SEGGER_RTT.c
+		Lib/nRF5_SDK/external/segger_rtt/SEGGER_RTT_Syscalls_GCC.c
+		Lib/nRF5_SDK/external/segger_rtt/SEGGER_RTT_printf.c
+		Lib/nRF5_SDK/integration/nrfx/legacy/nrf_drv_ppi.c
+		Lib/nRF5_SDK/integration/nrfx/legacy/nrf_drv_uart.c
+		Lib/nRF5_SDK/modules/nrfx/drivers/src/nrfx_ppi.c
+		Lib/nRF5_SDK/modules/nrfx/drivers/src/nrfx_saadc.c
+		Lib/nRF5_SDK/modules/nrfx/drivers/src/nrfx_timer.c
+		Lib/nRF5_SDK/modules/nrfx/drivers/src/nrfx_uart.c
+		Lib/nRF5_SDK/modules/nrfx/drivers/src/nrfx_uarte.c
+		Lib/nRF5_SDK/modules/nrfx/drivers/src/prs/nrfx_prs.c
+		Lib/nRF5_SDK/modules/nrfx/mdk/gcc_startup_nrf52.S
+		Lib/nRF5_SDK/modules/nrfx/mdk/system_nrf52.c
+		Lib/nRF5_SDK/modules/nrfx/soc/nrfx_atomic.c
+		Lib/nRF5_SDK/components/drivers_nrf/nrf_soc_nosd/nrf_nvic.c
+		Lib/nRF5_SDK/components/drivers_nrf/nrf_soc_nosd/nrf_soc.c
+		Lib/nRF5_SDK/components/libraries/bsp/bsp.c
+		Lib/nRF5_SDK/components/libraries/button/app_button.c
+		Lib/nRF5_SDK/components/libraries/gfx/nrf_gfx.c
+		Lib/nRF5_SDK/components/libraries/queue/nrf_queue.c
+		Lib/nRF5_SDK/components/libraries/scheduler/app_scheduler.c
+		Lib/nRF5_SDK/components/libraries/spi_mngr/nrf_spi_mngr.c
+		Lib/nRF5_SDK/components/libraries/timer/app_timer.c
+		Lib/nRF5_SDK/components/libraries/util/nrf_assert.c
+		Lib/nRF5_SDK/external/fprintf/nrf_fprintf.c
+		Lib/nRF5_SDK/external/fprintf/nrf_fprintf_format.c
+		Lib/nRF5_SDK/external/segger_rtt/SEGGER_RTT.c
+		Lib/nRF5_SDK/external/segger_rtt/SEGGER_RTT_Syscalls_GCC.c
+		Lib/nRF5_SDK/external/segger_rtt/SEGGER_RTT_printf.c
+		Lib/nRF5_SDK/external/thedotfactory_fonts/orkney24pts.c
+		Lib/nRF5_SDK/external/thedotfactory_fonts/orkney8pts.c
+		Lib/nRF5_SDK/integration/nrfx/legacy/nrf_drv_clock.c
+		Lib/nRF5_SDK/integration/nrfx/legacy/nrf_drv_spi.c
+		Lib/nRF5_SDK/modules/nrfx/drivers/src/nrfx_clock.c
+		Lib/nRF5_SDK/modules/nrfx/drivers/src/nrfx_gpiote.c
+		Lib/nRF5_SDK/modules/nrfx/drivers/src/nrfx_spi.c
+		Lib/nRF5_SDK/modules/nrfx/drivers/src/nrfx_spim.c
+	)
+
+	set_property(SOURCE Lib/nRF5_SDK/modules/nrfx/mdk/gcc_startup_nrf52.S PROPERTY LANGUAGE C)
+
+	# KLL Options
+	set( Device_KLL ${Device_KLL} "${CMAKE_CURRENT_SOURCE_DIR}/Lib/nrf5.kll" )
+endif ()
+
+#| Kinetis Sources
+if ( "${CHIP_SUPPORT}" MATCHES "kinetis" )
+	# KLL Options
+	set( Device_KLL ${Device_KLL} "${CMAKE_CURRENT_SOURCE_DIR}/Lib/kinetis.kll" )
+endif ()
 
 #| Clang needs a few more functions for linking
 if ( "${COMPILER}" MATCHES "clang" )
@@ -120,20 +226,22 @@ message( "${COMPILER_SRCS}" )
 #| USB Defines, this is how the loader programs detect which type of chip base is used
 message( STATUS "Bootloader Type:" )
 if ( DFU )
-	set( VENDOR_ID       "0x1C11" )
-	set( PRODUCT_ID      "0xB04D" )
-	set( BOOT_VENDOR_ID  "0x1C11" )
-	set( BOOT_PRODUCT_ID "0xB007" )
+	# XXX (HaaTa) These VID's are deprecated, but are kept as the default for unspecified keyboards
+	set( VENDOR_ID       "0x1C11" CACHE STRING "USB Firmware VID" )
+	set( PRODUCT_ID      "0xB04D" CACHE STRING "USB Firmware PID" )
+	set( BOOT_VENDOR_ID  "0x1C11" CACHE STRING "USB Bootloader VID" )
+	set( BOOT_PRODUCT_ID "0xB007" CACHE STRING "USB Bootloader PID" )
 
 	# The | symbol is replaced by a space if in secure mode, or a \0 if not (at runtime)
 	set( BOOT_DFU_ALTNAME "Kiibohd DFU|Secure" )
+	set( BOOT_DFU_ALTNAME2 "Kiibohd DFU (BLE)|Secure" )
 
 	message( "dfu" )
 elseif ( TEENSY )
-	set( VENDOR_ID       "0x1C11" )
-	set( PRODUCT_ID      "0xB04D" )
-	set( BOOT_VENDOR_ID  "0x16c0" ) # TODO Double check, this is likely incorrect
-	set( BOOT_PRODUCT_ID "0x0487" )
+	set( VENDOR_ID       "0x1C11" CACHE STRING "USB Firmware VID" )
+	set( PRODUCT_ID      "0xB04D" CACHE STRING "USB Firmware PID" )
+	set( BOOT_VENDOR_ID  "0x16c0" CACHE STRING "USB Bootloader VID" )# TODO Double check, this is likely incorrect
+	set( BOOT_PRODUCT_ID "0x0487" CACHE STRING "USB Bootloader PID" )
 	message( "Teensy" )
 endif ()
 
@@ -162,11 +270,11 @@ if ( BOOTLOADER )
 	if ( "${COMPILER}" MATCHES "clang" )
 		# TODO Not currently working, clang doesn't support all the neccessary extensions
 		message ( AUTHOR_WARNING "clang doesn't support all the needed extensions, code may need rework to use clang" )
-		set ( TUNING "-D_bootloader_ -Wno-main -msoft-float -target arm-none-eabi -mtbm -nostdlib -fdata-sections -ffunction-sections -fshort-wchar -fno-builtin -fplan9-extensions -fstrict-volatile-bitfields -flto -fno-use-linker-plugin" )
+		set ( TUNING "-D_bootloader_ -Wno-main -msoft-float -target arm-none-eabi -mtbm -fdata-sections -ffunction-sections -fshort-wchar -fno-builtin -fplan9-extensions -fstrict-volatile-bitfields -flto -fno-use-linker-plugin -nostdlib" )
 
 	## GCC Compiler
 	else ()
-		set ( TUNING "-D_bootloader_ -Wno-main -msoft-float -mthumb -fplan9-extensions -ffunction-sections -fdata-sections -fno-builtin -fstrict-volatile-bitfields -flto -fno-use-linker-plugin -nostdlib" )
+		set ( TUNING "-D_bootloader_ -Wno-main -msoft-float -mthumb -fplan9-extensions -ffunction-sections -fdata-sections -fno-builtin -fstrict-volatile-bitfields -fno-use-linker-plugin -nostdlib" )
 		#set( TUNING "-mthumb -fdata-sections -ffunction-sections -fno-builtin -msoft-float -fstrict-volatile-bitfields -flto -fno-use-linker-plugin -fwhole-program -Wno-main -nostartfiles -fplan9-extensions -D_bootloader_" )
 	endif ()
 
@@ -174,11 +282,11 @@ if ( BOOTLOADER )
 else ()
 	## Clang Compiler
 	if ( "${COMPILER}" MATCHES "clang" )
-		set ( TUNING "-target arm-none-eabi -nostdlib -fdata-sections -ffunction-sections -fshort-wchar -fno-builtin" )
+		set ( TUNING "-target arm-none-eabi -nostdlib -fdata-sections -ffunction-sections -fshort-wchar -fno-builtin ${FLOAT}" )
 
 	## GCC Compiler
 	else ()
-		set( TUNING "-mthumb -nostdlib -fdata-sections -ffunction-sections -fshort-wchar -fno-builtin -nostartfiles" )
+		set( TUNING "-mthumb -nostdlib -fdata-sections -ffunction-sections -fshort-wchar -fno-builtin -nostartfiles -fstack-protector-all ${FLOAT}" )
 	endif ()
 endif ()
 
@@ -208,14 +316,14 @@ add_definitions( "-mcpu=${CPU} -DF_CPU=${F_CPU} -D_${CHIP}_=1 -O${OPT} ${TUNING}
 #| Linker Flags
 if ( BOOTLOADER )
 	# Bootloader linker flags
-	set( LINKER_FLAGS "${TUNING} -Wl,--gc-sections -fwhole-program -T${CMAKE_CURRENT_SOURCE_DIR}/../Lib/ld/${CHIP}.bootloader.ld -nostartfiles -Wl,-Map=link.map" )
+	set( LINKER_FLAGS "${TUNING} -Wl,--gc-sections -fwhole-program -L${CMAKE_CURRENT_SOURCE_DIR}/../Lib/ld -T${CHIP}.bootloader.ld -nostartfiles -Wl,-Map=link.map" )
 else ()
 	## Clang Compiler
 	if ( "${COMPILER}" MATCHES "clang" )
-		set( LINKER_FLAGS "${TUNING} -Wl,-Map=link.map,--cref -Wl,--gc-sections -Wl,--no-wchar-size-warning -T${CMAKE_CURRENT_SOURCE_DIR}/Lib/ld/${CHIP}.ld" )
+		set( LINKER_FLAGS "-mcpu=${CPU} ${TUNING} -Wl,-Map=link.map,--cref -Wl,--gc-sections -Wl,--no-wchar-size-warning -L${CMAKE_CURRENT_SOURCE_DIR}/Lib/ld -T${CHIP}.ld" )
 	else ()
 		# Normal linker flags
-		set( LINKER_FLAGS "${TUNING} -Wl,-Map=link.map,--cref -Wl,--gc-sections -Wl,--no-wchar-size-warning -T${CMAKE_CURRENT_SOURCE_DIR}/Lib/ld/${CHIP}.ld" )
+		set( LINKER_FLAGS "-mcpu=${CPU} ${TUNING} -Wl,-Map=link.map,--cref -Wl,--gc-sections -Wl,--no-wchar-size-warning -L${CMAKE_CURRENT_SOURCE_DIR}/Lib/ld -T${CHIP}.ld" )
 	endif ()
 endif ()
 
@@ -249,4 +357,3 @@ if ( "${COMPILER}" MATCHES "clang" )
 else ()
 	set( LSS_FLAGS -h -S -z )
 endif ()
-

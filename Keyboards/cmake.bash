@@ -13,6 +13,14 @@ BuildPath=${BuildPath}.${Compiler}
 EnableHostBuild=${EnableHostBuild:-false}
 EnableHostOnlyBuild=${EnableHostOnlyBuild:-false}
 HostTest=${HostTest:-""}
+EnableSanitizer=${EnableSanitizer:-false}
+DisableSanitizer=${DisableSanitizer:-false}
+
+# Default VID:PIDs
+VENDOR_ID=${VENDOR_ID:-0x1C11}
+PRODUCT_ID=${PRODUCT_ID:-0xB04D}
+BOOT_VENDOR_ID=${BOOT_VENDOR_ID:-0x1C11}
+BOOT_PRODUCT_ID=${BOOT_PRODUCT_ID:-0xB007}
 
 # Make sure all of the relevant variables have been set
 # NOTE: PartialMaps and DefaultMap do not have to be set
@@ -24,6 +32,18 @@ for var in ${VariablesList[@]}; do
 		ExitEarly=true
 	fi
 done
+
+# Make sure pipenv is detected
+PIPENV_ACTIVE=${PIPENV_ACTIVE:-0}
+if [ $PIPENV_ACTIVE -ne 1 ]; then
+	CUR_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null && pwd )"
+	echo "ERROR: pipenv is not active!"
+	echo "Please run the following before running this script ($(basename "$0")):"
+	echo "  cd $CUR_DIR  OR  cd $CUR_DIR/../kll"
+	echo "  pipenv install"
+	echo "  pipenv shell"
+	ExitEarly=true
+fi
 
 # Error was detected, exit immediately
 if $ExitEarly; then
@@ -111,6 +131,8 @@ BuildPath="${OSTYPE}.${BuildPath}"
 BuildPath="${BuildPath}${ExtraBuildPath}"
 # Path prepend (sometimes used)
 BuildPath="${BuildPathPrepend}${BuildPath}"
+# Extra Path Prepend
+BuildPath="${ExtraBuildPathPrepend}${BuildPath}"
 # Path used for host builds
 HostPath="${BuildPath}.host"
 
@@ -173,6 +195,48 @@ done
 # If EnableHostOnlyBuild is enabled, EnableHostBuild should be set
 if ${EnableHostOnlyBuild}; then
 	EnableHostBuild=true
+	EnableSanitizer=true
+fi
+
+# Sanitizer lookup
+if $TRAVIS; then
+	if [ "$TRAVIS_OS_NAME" = "osx" ]; then
+		export EnableSanitizer=false
+		export CMakeExtraArgs=""
+		echo "macOS builds on Travis-CI don't seem to like the DYLD_INSERT_LIBRARIES preload, disabling sanitization."
+	fi
+fi
+if $DisableSanitizer; then
+	export EnableSanitizer=false
+	export CMakeExtraArgs=""
+fi
+if $EnableSanitizer; then
+	export CMakeExtraArgs="-DSANITIZER=1"
+
+	case "$OSTYPE" in
+	# Linux
+	"linux-gnu")
+		# TODO (HaaTa) This may not work using clang as the compiler (but it may work ok)
+		# It's still recommended to have llvm installed to show backtrace
+		# Leak sanitizer is finding leaks in Python, these are likely bugs but the code we are
+		# testing doesn't actually malloc so it's not a big deal.
+		ASAN_LIB=$(ldconfig -v 2> /dev/null | grep libasan.so | cut -d' ' -f1 | head -1 | xargs)
+		UBSAN_LIB=$(ldconfig -v 2> /dev/null | grep libubsan.so | cut -d' ' -f1 | head -1 | xargs)
+		export ASAN_OPTIONS=detect_leaks=0
+		export PRELOADED_LIBS=${ASAN_LIB}:${UBSAN_LIB}
+		echo "ASAN_OPTIONS -> ${ASAN_OPTIONS}"
+		echo "PRELOADED_LIBS -> ${PRELOADED_LIBS}"
+		;;
+	# macOS
+	"darwin"*)
+		# TODO (HaaTa) This may possibly point to the wrong clang
+		#              It would be better to get this path directly from CMake
+		# This says gcc, but on Darwin, it's actually clang
+		# (specifying clang seems to have problems)
+		export DYLD_INSERT_LIBRARIES=$(gcc -print-resource-dir)/lib/darwin/libclang_rt.asan_osx_dynamic.dylib
+		echo "DYLD_INSERT_LIBRARIES -> ${DYLD_INSERT_LIBRARIES}"
+		;;
+	esac
 fi
 
 
@@ -212,6 +276,11 @@ echo "Selected Generator: ${CMAKE_GENERATOR}"
 echo "${BuildPath}"
 
 
+# Info
+echo "VID: ${VENDOR_ID} (Boot: ${BOOT_VENDOR_ID})"
+echo "PID: ${PRODUCT_ID} (Boot: ${BOOT_PRODUCT_ID})"
+
+
 
 #
 # Run Host Build (test kll)
@@ -236,6 +305,10 @@ if ${EnableHostBuild}; then
 			-DBaseMap="${BaseMap}" \
 			-DDefaultMap="${DefaultMap}" \
 			-DPartialMaps="${PartialMapsExpanded}" \
+			-DVENDOR_ID="${VENDOR_ID}" \
+			-DPRODUCT_ID="${PRODUCT_ID}" \
+			-DBOOT_VENDOR_ID="${BOOT_VENDOR_ID}" \
+			-DBOOT_PRODUCT_ID="${BOOT_PRODUCT_ID}" \
 			${CMakeExtraArgs} "${CMakeListsPath}" \
 			-G "${CMAKE_GENERATOR}"
 		return_code=$?
@@ -253,6 +326,10 @@ if ${EnableHostBuild}; then
 			-DBaseMap="${BaseMap}" \
 			-DDefaultMap="${DefaultMap}" \
 			-DPartialMaps="${PartialMapsExpanded}" \
+			-DVENDOR_ID="${VENDOR_ID}" \
+			-DPRODUCT_ID="${PRODUCT_ID}" \
+			-DBOOT_VENDOR_ID="${BOOT_VENDOR_ID}" \
+			-DBOOT_PRODUCT_ID="${BOOT_PRODUCT_ID}" \
 			${CMakeExtraArgs} "${CMakeListsPath}" \
 			-G "${CMAKE_GENERATOR}"
 		return_code=$?
@@ -288,7 +365,7 @@ if ${EnableHostBuild}; then
 		if [[ -e "$TestPath" ]]; then
 			# Run test
 			echo "Running '$TestPath'..."
-			./${TestPath}
+			LD_PRELOAD=${PRELOADED_LIBS} python3 ./${TestPath}
 			return_code=$?
 
 			# Results
@@ -330,6 +407,10 @@ if [[ "${OS_BUILD}" == "cygwin" ]]; then
 		-DBaseMap="${BaseMap}" \
 		-DDefaultMap="${DefaultMap}" \
 		-DPartialMaps="${PartialMapsExpanded}" \
+		-DVENDOR_ID="${VENDOR_ID}" \
+		-DPRODUCT_ID="${PRODUCT_ID}" \
+		-DBOOT_VENDOR_ID="${BOOT_VENDOR_ID}" \
+		-DBOOT_PRODUCT_ID="${BOOT_PRODUCT_ID}" \
 		${CMakeExtraArgs} "${CMakeListsPath}" \
 		-G "${CMAKE_GENERATOR}"
 	return_code=$?
@@ -347,6 +428,10 @@ else
 		-DBaseMap="${BaseMap}" \
 		-DDefaultMap="${DefaultMap}" \
 		-DPartialMaps="${PartialMapsExpanded}" \
+		-DVENDOR_ID="${VENDOR_ID}" \
+		-DPRODUCT_ID="${PRODUCT_ID}" \
+		-DBOOT_VENDOR_ID="${BOOT_VENDOR_ID}" \
+		-DBOOT_PRODUCT_ID="${BOOT_PRODUCT_ID}" \
 		${CMakeExtraArgs} "${CMakeListsPath}" \
 		-G "${CMAKE_GENERATOR}"
 	return_code=$?

@@ -1,18 +1,29 @@
-/* Copyright (C) 2015-2018 by Jacob Alexander
+/* Copyright (C) 2015-2019 by Jacob Alexander
  *
  * This file is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
+ * it under the terms of the GNU Lesser General Public License as published by
  * the Free Software Foundation, either version 3 of the License, or
  * (at your option) any later version.
  *
  * This file is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+ * GNU Lesser General Public License for more details.
  *
- * You should have received a copy of the GNU General Public License
+ * You should have received a copy of the GNU Lesser General Public License
  * along with this file.  If not, see <http://www.gnu.org/licenses/>.
  */
+
+// ----- Defines -----
+
+// Compile-modes
+// See capabilities.kll for details
+#define None         0
+#define USBSwap      1
+#define USBInterSwap 2
+#define USBHubSwap   3
+
+
 
 // ----- Includes -----
 
@@ -21,33 +32,31 @@
 
 // Project Includes
 #include <cli.h>
+#include <kll.h>
 #include <kll_defs.h>
 #include <latency.h>
 #include <led.h>
 #include <print.h>
+#include <Lib/gpio.h>
 
 // USB Includes
 #if defined(_avr_at_)
 #include <avr/usb_keyboard_serial.h>
-#elif defined(_kinetis_) || defined(_sam_) //AVR
+#elif defined(_kinetis_) || defined(_sam_)
 #include <arm/usb_dev.h>
 #endif
 
 // Interconnect Includes
+#if Port_SwapMode_define == USBInterSwap
 #include <connect_scan.h>
+#endif
 
 // Local Includes
 #include "port_scan.h"
 
 
 
-// ----- Defines -----
-
-
-
 // ----- Structs -----
-
-
 
 // ----- Function Declarations -----
 
@@ -61,6 +70,25 @@ void cliFunc_portUSB  ( char* args );
 // ----- Variables -----
 
 uint32_t Port_lastcheck_ms;
+uint32_t Port_attempt;
+
+// GPIOs used for swapping
+#if Port_SwapMode_define == USBSwap || Port_SwapMode_define == USBInterSwap
+static const GPIO_Pin usb_swap_pin1 = Port_SwapUSBPin1_define;
+#endif
+#if Port_SwapMode_define == USBHubSwap
+static const GPIO_Pin usb_swap_pin2 = Port_SwapUSBPin2_define;
+static const GPIO_Pin usb_swap_pin3 = Port_SwapUSBPin3_define;
+static const GPIO_Pin usb_swap_pin4 = Port_SwapUSBPin4_define;
+#endif
+
+#if Port_SwapMode_define == USBInterSwap
+static const GPIO_Pin uart_swap_pin1 = Port_SwapInterpPin1_define;;
+#endif
+
+#if Port_SwapMode_define == USBInterSwap
+static const GPIO_Pin uart_cross_pin1 = Port_CrossInterPin1_define;
+#endif
 
 // Scan Module command dictionary
 CLIDict_Entry( portCross, "Cross interconnect pins." );
@@ -68,8 +96,10 @@ CLIDict_Entry( portUSB,   "Swap USB ports manually, forces usb and interconnect 
 CLIDict_Entry( portUART,  "Swap interconnect ports." );
 
 CLIDict_Def( portCLIDict, "Port Swap Module Commands" ) = {
+#if Port_SwapMode_define == USBInterSwap
 	CLIDict_Item( portCross ),
 	CLIDict_Item( portUART ),
+#endif
 	CLIDict_Item( portUSB ),
 	{ 0, 0, 0 } // Null entry for dictionary end
 };
@@ -83,45 +113,45 @@ static uint8_t portLatencyResource;
 
 void Port_usb_swap()
 {
-	info_print("USB Port Swap");
+#if Port_SwapMode_define == USBSwap || Port_SwapMode_define == USBInterSwap
+	info_printNL("USB Port Swap");
 
-	// PTA4 - USB Swap
-#if defined(_kinetis_)
-	GPIOA_PTOR |= (1<<4);
-#elif defined(_sam_)
-	//SAM TODO
-#endif
+	// USB Swap
+	GPIO_Ctrl( usb_swap_pin1, GPIO_Type_DriveToggle, GPIO_Config_None );
 
 	// Re-initialize usb
 	// Call usb_configured() to check if usb is ready
-	usb_init();
+	usb_reinit();
+#else
+	warn_printNL("Unsupported");
+#endif
 }
 
 void Port_uart_swap()
 {
-	info_print("Interconnect Line Swap");
+#if Port_SwapMode_define == USBInterSwap
+	info_printNL("Interconnect Line Swap");
 
-	// PTA13 - UART Swap
-#if defined(_kinetis_)
-	GPIOA_PTOR |= (1<<13);
-#elif defined(_sam_)
-	//SAM TODO
+	// UART Swap
+	GPIO_Ctrl( uart_swap_pin1, GPIO_Type_DriveToggle, GPIO_Config_None );
+#else
+	warn_printNL("Unsupported");
 #endif
 }
 
 void Port_cross()
 {
-	info_print("Interconnect Line Cross");
+#if Port_SwapMode_define == USBInterSwap
+	info_printNL("Interconnect Line Cross");
 
-	// PTA12 - UART Tx/Rx cross-over
-#if defined(_kinetis_)
-	GPIOA_PTOR |= (1<<12);
-#elif defined(_sam_)
-	//SAM TODO
-#endif
+	// UART Tx/Rx cross-over
+	GPIO_Ctrl( uart_cross_pin1, GPIO_Type_DriveToggle, GPIO_Config_None );
 
 	// Reset interconnects
 	Connect_reset();
+#else
+	warn_printNL("Unsupported");
+#endif
 }
 
 // Setup
@@ -130,30 +160,33 @@ inline void Port_setup()
 	// Register Scan CLI dictionary
 	CLI_registerDictionary( portCLIDict, portCLIDictName );
 
-#if defined(_kinetis_)
-	// PTA4 - USB Swap
+#if Port_SwapMode_define == USBSwap
+	// USB Swap
 	// Start, disabled
-	GPIOA_PDDR |= (1<<4);
-	PORTA_PCR4 = PORT_PCR_SRE | PORT_PCR_DSE | PORT_PCR_MUX(1);
-	GPIOA_PCOR |= (1<<4);
+	GPIO_Ctrl( usb_swap_pin1, GPIO_Type_DriveSetup, GPIO_Config_None );
+	GPIO_Ctrl( usb_swap_pin1, GPIO_Type_DriveLow, GPIO_Config_None );
+#elif Port_SwapMode_define == USBInterSwap
+	// USB Swap
+	// Start, disabled
+	GPIO_Ctrl( usb_swap_pin1, GPIO_Type_DriveSetup, GPIO_Config_None );
+	GPIO_Ctrl( usb_swap_pin1, GPIO_Type_DriveLow, GPIO_Config_None );
 
-	// PTA12 - UART Tx/Rx cross-over
+	// UART Tx/Rx cross-over
 	// Start, disabled
-	GPIOA_PDDR |= (1<<12);
-	PORTA_PCR12 = PORT_PCR_SRE | PORT_PCR_DSE | PORT_PCR_MUX(1);
-	GPIOA_PCOR |= (1<<12);
+	GPIO_Ctrl( uart_cross_pin1, GPIO_Type_DriveSetup, GPIO_Config_None );
+	GPIO_Ctrl( uart_cross_pin1, GPIO_Type_DriveLow, GPIO_Config_None );
 
-	// PTA13 - UART Swap
+	// UART Swap
 	// Start, disabled
-	GPIOA_PDDR |= (1<<13);
-	PORTA_PCR13 = PORT_PCR_SRE | PORT_PCR_DSE | PORT_PCR_MUX(1);
-	GPIOA_PCOR |= (1<<13);
-#elif defined(_sam_)
-	//SAM TODO
+	GPIO_Ctrl( uart_swap_pin1, GPIO_Type_DriveSetup, GPIO_Config_None );
+	GPIO_Ctrl( uart_swap_pin1, GPIO_Type_DriveLow, GPIO_Config_None );
+#else
+	warn_printNL("Unsupported");
 #endif
 
 	// Starting point for automatic port swapping
 	Port_lastcheck_ms = systick_millis_count;
+	Port_attempt = 0;
 
 	// Allocate latency measurement resource
 	portLatencyResource = Latency_add_resource("PortSwap", LatencyOption_Ticks);
@@ -171,7 +204,7 @@ inline uint8_t Port_scan()
 	// Wait 1000 ms before checking
 	// Only check for swapping after delay
 	uint32_t wait_ms = systick_millis_count - Port_lastcheck_ms;
-	if ( wait_ms > USBPortSwapDelay_ms )
+	if ( wait_ms > USBPortSwapDelay_ms + Port_attempt * USBPortSwapDelay_ms / 4 )
 	{
 		// Update timeout
 		Port_lastcheck_ms = systick_millis_count;
@@ -180,6 +213,7 @@ inline uint8_t Port_scan()
 		if ( !usb_configured() )
 		{
 			Port_usb_swap();
+			Port_attempt++;
 		}
 	}
 

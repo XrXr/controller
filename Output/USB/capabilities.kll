@@ -1,20 +1,25 @@
 # USB
 
 Name = USBCapabilities;
-Version = 0.11;
-Author = "HaaTa (Jacob Alexander) 2014-2017";
-KLL = 0.5;
+Version = 0.14;
+Author = "HaaTa (Jacob Alexander) 2014-2020";
 
 # Modified Date
-Date = 2017-12-17;
+Date = 2020-03-14;
 
 
 # Output capabilities
-consCtrlOut => Output_consCtrlSend_capability( consCode : 2 );
-noneOut     => Output_noneSend_capability();
-sysCtrlOut  => Output_sysCtrlSend_capability( sysCode : 1 );
-usbKeyOut   => Output_usbCodeSend_capability( usbCode : 1 );
-mouseOut    => Output_usbMouse_capability( mouseCode : 2, relative_x : 2, relative_y : 2 );
+consCtrlOut   => Output_consCtrlSend_capability( consCode : 2 );
+noneOut       => Output_noneSend_capability();
+sysCtrlOut    => Output_sysCtrlSend_capability( sysCode : 1 );
+usbKeyOut     => Output_usbCodeSend_capability( usbCode : 1 );
+mouseOut      => Output_usbMouse_capability( mouseCode : 2, relative_x : 2, relative_y : 2 );
+mouseWheelOut => Output_usbMouseWheel_capability( vertWheel : 1, horiWheel : 1 );
+
+# Releases a given usb code
+# Useful when wanting to block a specific key from functioning
+# e.g. Releasing RCtrl and RShift when activating a Kira function layer to use media keys in Windows
+releaseUSBKey => Output_usbCodeRelease_capability( usbCode : 1 );
 
 # Configuration capabilities
 kbdProtocolBoot => Output_kbdProtocolBoot_capability();
@@ -28,6 +33,11 @@ Output_USBEnabled => Output_USBEnabled_define;
 # Locale Settings
 keyboardLocale => KeyboardLocale_define;
 keyboardLocale = 0;
+
+# Disable releaseUSBkey capability
+# Useful when the feature is not desireable
+releaseUSBKeyDisable => disable_usbCodeRelease_define;
+releaseUSBKeyDisable = 0;
 
 # USB Idle Timeout
 # After a USB HID packet is sent (Keyboard only), send another packet after n * 4 ms
@@ -106,11 +116,6 @@ enableUSBResume = 1;
 # But you'll lose functionality for that feature
 # Disabling endpoints will save RAM and Flash on the target MCU
 
-# Joystick Endpoint
-# *Currently Unused*
-enableJoystick => enableJoystick_define;
-enableJoystick = 0;
-
 # Mouse Endpoint
 enableMouse => enableMouse_define;
 enableMouse = 1;
@@ -119,11 +124,17 @@ enableMouse = 1;
 enableKeyboard => enableKeyboard_define;
 enableKeyboard = 1;
 
-# CDC / Serial Port Endpoint
-enableVirtualSerialPort => enableVirtualSerialPort_define;
-enableVirtualSerialPort = 1;
-
 # Raw I/O Endpoint
 enableRawIO => enableRawIO_define;
 enableRawIO = 1;
 
+
+## RawIO Configuration ##
+# 0 - Loopback mode disabled
+# 1 - Loopback mode enabled
+# Enabling loopback mode will print each hex value received from the RawIO interface
+# to the debug cli.
+# This will disable HID-IO functionality, and is used to debug the interface.
+# An alternate debug interface is required to view such as UART or RTT
+rawIOLoopbackMode => rawIOLoopbackMode_define;
+rawIOLoopbackMode = 0;

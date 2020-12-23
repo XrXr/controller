@@ -2,19 +2,19 @@
 Host-Side Python Commands for TestOut Output Module
 '''
 
-# Copyright (C) 2016-2018 by Jacob Alexander
+# Copyright (C) 2016-2019 by Jacob Alexander
 #
 # This file is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
+# it under the terms of the GNU Lesser General Public License as published by
 # the Free Software Foundation, either version 3 of the License, or
 # (at your option) any later version.
 #
 # This file is distributed in the hope that it will be useful,
 # but WITHOUT ANY WARRANTY; without even the implied warranty of
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
+# GNU Lesser General Public License for more details.
 #
-# You should have received a copy of the GNU General Public License
+# You should have received a copy of the GNU Lesser General Public License
 # along with this file.  If not, see <http://www.gnu.org/licenses/>.
 
 ### Imports ###
@@ -24,7 +24,7 @@ import copy
 import os
 import sys
 
-from ctypes import POINTER, cast, c_char_p, c_uint8, c_uint16, Structure
+from ctypes import POINTER, cast, c_char_p, c_int8, c_int16, c_uint8, c_uint16, Structure
 
 import kiilogger
 
@@ -52,11 +52,11 @@ class HIDIO_Packet( Structure ):
     See hidio_com.h in Output/HID-IO
     '''
     _fields_ = [
-        ( 'type',      c_uint8, 3 ),
-        ( 'cont',      c_uint8, 1 ),
-        ( 'id_width',  c_uint8, 1 ),
-        ( 'reserved',  c_uint8, 1 ),
         ( 'upper_len', c_uint8, 2 ),
+        ( 'reserved',  c_uint8, 1 ),
+        ( 'id_width',  c_uint8, 1 ),
+        ( 'cont',      c_uint8, 1 ),
+        ( 'type',      c_uint8, 3 ),
         ( 'len',       c_uint8 ),
     ]
 
@@ -108,8 +108,8 @@ class USBKeys( Structure ):
 
     _fields_ = [
         ( 'modifiers', c_uint8 ),
-        ( 'keys',      c_uint8 * 27 ), # XXX (HaaTa) There should be a way to make this dynamic
-                                       # XXX (HaaTa) Use builtins to parse this value early from the libray
+        ( 'keys',      c_uint8 * 28 ), # XXX (HaaTa) There should be a way to make this dynamic
+                                       # XXX (HaaTa) Use builtins to parse this value early from the library
         ( 'sys_ctrl',  c_uint8 ),
         ( 'cons_ctrl', c_uint16 ),
         ( 'changed',   c_uint8 ),
@@ -121,6 +121,33 @@ class USBKeys( Structure ):
             self.keys,
             self.sys_ctrl,
             self.cons_ctrl,
+            self.changed,
+        )
+        return val
+
+
+class USBMouse( Structure ):
+    '''
+    USBMouse struct
+    See Output/USB/output_usb.h
+    '''
+
+    _fields_ = [
+        ( 'buttons',    c_uint16 ),
+        ( 'relative_x', c_int16 ),
+        ( 'relative_y', c_int16 ),
+        ( 'vertwheel',  c_int8 ),
+        ( 'horiwheel',  c_int8 ),
+        ( 'changed',    c_uint8 ),
+    ]
+
+    def __repr__( self ):
+        val = "(buttons={}, relative_x={}, relative_y={}, vertwheel={}, horiwheel={}, changed={})".format(
+            self.buttons,
+            self.relative_x,
+            self.relative_y,
+            self.vertwheel,
+            self.horiwheel,
             self.changed,
         )
         return val
@@ -154,10 +181,11 @@ class USBKeyboard:
         Return a list of usb codes in the USB packet
         '''
         # keys array format
-        # Bits   0 -  45 (bytes  0 -  5) correspond to USB Codes   4 -  49 (Main)
-        # Bits  48 - 161 (bytes  6 - 20) correspond to USB Codes  51 - 164 (Secondary)
-        # Bits 168 - 213 (bytes 21 - 26) correspond to USB Codes 176 - 221 (Tertiary)
-        # Bits 214 - 216                 unused
+        # Bits   0 -   3                 unused
+        # Bits   4 - 164 (bytes  0 - 20) Keyboard Codes
+        # Bits 165 - 175                 unused
+        # Bits 176 - 221 (bytes 22 - 27) Keypad Codes
+        # Bits 222 - 223                 unused
         keys = []
 
         # Calculate modifiers
@@ -178,18 +206,8 @@ class USBKeyboard:
                 for pos, bit in zip( range( start, start + 8 ), range( 0, 8 ) ):
                     # Check if bit is set
                     if byte & (1<<bit):
-                        if pos <= 45:
-                            keys.append( pos + 4 )
-                        elif pos <= 47:
-                            pass
-                        elif pos <= 161:
-                            keys.append( pos + 3 )
-                        elif pos <= 167:
-                            pass
-                        elif pos <= 213:
-                            keys.append( pos + 8 )
-                        elif pos <= 216:
-                            pass
+                        if pos <= 221:
+                            keys.append( pos )
                 start += 8
 
         return keys
@@ -232,6 +250,15 @@ class Commands:
         2 - Extra debug output
         '''
         cast(control.kiibohd.Output_DebugMode, POINTER(c_uint8))[0] = debug
+
+    def setKbdProtocol(self, value):
+        '''
+        Set NKRO or 6KRO mode
+        0 - NKRO Mode
+        1 - 6KRO Mode
+        '''
+        cast(control.kiibohd.USBKeys_Protocol_New, POINTER(c_uint8))[0] = value
+        cast(control.kiibohd.USBKeys_Protocol_Change, POINTER(c_uint8))[0] = 1
 
     def setRawIOLoopback( self, enable=True ):
         '''
@@ -306,9 +333,16 @@ class Callbacks:
 
     def mouse_send( self, args ):
         '''
-        TODO
+        Callback received when Host-side KLL is ready to send USB mouse commands
+
+        TODO - Not fully implemented
         '''
+        usb_mouse = cast( control.kiibohd.USBMouse_primary, POINTER( USBMouse ) )[0]
+
         logger.warning("mouse_send not implemented")
+
+        # Indicate we are done with the buffer
+        usb_mouse.changed = 0
 
     def rawio_available( self, args ):
         '''

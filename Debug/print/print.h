@@ -1,4 +1,4 @@
-/* Copyright (C) 2011-2017 by Jacob Alexander
+/* Copyright (C) 2011-2020 by Jacob Alexander
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -31,6 +31,7 @@
 #endif
 
 // Project Includes
+#include <Lib/time.h>
 #include <output_com.h>
 
 
@@ -63,23 +64,23 @@
 
 // Info Messages
 #define info_dPrint(...)  dPrintMsg        ("1;32",   "INFO",    __VA_ARGS__) // Info Msg
-#define info_print(str)   printMsgNL       ("1;32",   "INFO",    str)         // Info Msg
-#define info_msg(str)     printMsg         ("1;32",   "INFO",    str)         // Info Msg
+#define info_print(str)   printMsg         ("1;32",   "INFO",    str)         // Info Msg
+#define info_printNL(str) printMsgNL       ("1;32",   "INFO",    str)         // Info Msg
 
 // Warning Messages
 #define warn_dPrint(...)  dPrintMsg        ("1;33",   "WARNING", __VA_ARGS__) // Warning Msg
-#define warn_print(str)   printMsgNL       ("1;33",   "WARNING", str)         // Warning Msg
-#define warn_msg(str)     printMsg         ("1;33",   "WARNING", str)         // Warning Msg
+#define warn_print(str)   printMsg         ("1;33",   "WARNING", str)         // Warning Msg
+#define warn_printNL(str) printMsgNL       ("1;33",   "WARNING", str)         // Warning Msg
 
 // Error Messages
 #define erro_dPrint(...)  dPrintMsg        ("1;5;31", "ERROR",   __VA_ARGS__) // Error Msg
-#define erro_print(str)   printMsgNL       ("1;5;31", "ERROR",   str)         // Error Msg
-#define erro_msg(str)     printMsg         ("1;5;31", "ERROR",   str)         // Error Msg
+#define erro_print(str)   printMsg         ("1;5;31", "ERROR",   str)         // Error Msg
+#define erro_printNL(str) printMsgNL       ("1;5;31", "ERROR",   str)         // Error Msg
 
 // Debug Messages
 #define dbug_dPrint(...)  dPrintMsg        ("1;35",   "DEBUG",   __VA_ARGS__) // Debug Msg
-#define dbug_print(str)   printMsgNL       ("1;35",   "DEBUG",   str)         // Debug Msg
-#define dbug_msg(str)     printMsg         ("1;35",   "DEBUG",   str)         // Debug Msg
+#define dbug_print(str)   printMsg         ("1;35",   "DEBUG",   str)         // Debug Msg
+#define dbug_printNL(str) printMsgNL       ("1;35",   "DEBUG",   str)         // Debug Msg
 
 
 // Static String Printing
@@ -87,6 +88,7 @@
 #define print(s) _print(PSTR(s))
 #else
 #define print(s) _print(s)
+#define printNL(s) _print(s NL)
 #endif
 
 void _print( const char *s );
@@ -101,8 +103,21 @@ void printChar( char c );
 void printInt8    ( uint8_t  in );
 void printInt16   ( uint16_t in );
 void printInt32   ( uint32_t in );
+void printSInt32  ( int32_t in );
 void printHex_op  ( uint16_t in, uint8_t op );
 void printHex32_op( uint32_t in, uint8_t op );
+
+void printInt8Pad ( uint8_t  in );
+void printInt16Pad( uint16_t in );
+void printInt32Pad( uint32_t in );
+
+// The given number is divided by a power a 10 (e.g. 10, 100, 100)
+// Any value less than the mul, is after the decimal
+// Any value greater than the mul, is before the decimal
+// in * mul must not exceed the maximum size of in
+void printDecimal32( uint32_t in, uint32_t mul );
+
+void printTime( Time time );
 
 
 // String Functions
@@ -111,6 +126,7 @@ void printHex32_op( uint32_t in, uint8_t op );
 void int8ToStr    ( uint8_t  in, char*  out );
 void int16ToStr   ( uint16_t in, char*  out );
 void int32ToStr   ( uint32_t in, char*  out );
+void sint32ToStr  ( int32_t in, char*  out );
 void hexToStr_op  ( uint16_t in, char*  out, uint8_t op );
 void hex32ToStr_op( uint32_t in, char*  out, uint8_t op );
 void revsStr      ( char*  in );

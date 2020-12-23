@@ -1,4 +1,4 @@
-/* Copyright (C) 2011-2017 by Jacob Alexander
+/* Copyright (C) 2011-2020 by Jacob Alexander
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -78,6 +78,31 @@ void printChar( char c )
 }
 
 
+// Pad routine
+static void pad( char *str, uint8_t len )
+{
+	// Find final null, and move it
+	uint8_t pad_rest = 0;
+	for ( uint8_t c = 0; c < len - 1; c++ )
+	{
+		// Already found null, just pad now
+		if ( pad_rest )
+		{
+			str[c] = ' ';
+			continue;
+		}
+
+		// Looking for first null only
+		if ( str[c] == '\0' )
+		{
+			pad_rest = 1;
+			str[c] = ' ';
+		}
+	}
+
+	// Last character is always a null
+	str[len - 1] = '\0';
+}
 
 // Number Printing Functions
 void printInt8( uint8_t in )
@@ -87,6 +112,21 @@ void printInt8( uint8_t in )
 
 	// Convert number
 	int8ToStr( in, tmpStr );
+
+	// Print number
+	dPrintStr( tmpStr );
+}
+
+void printInt8Pad( uint8_t in )
+{
+	// Max number of characters is 3 + 1 for null
+	char tmpStr[4];
+
+	// Convert number
+	int8ToStr( in, tmpStr );
+
+	// Find final null, and move it
+	pad( tmpStr, sizeof(tmpStr) );
 
 	// Print number
 	dPrintStr( tmpStr );
@@ -104,6 +144,21 @@ void printInt16( uint16_t in )
 	dPrintStr( tmpStr );
 }
 
+void printInt16Pad( uint16_t in )
+{
+	// Max number of characters is 5 + 1 for null
+	char tmpStr[6];
+
+	// Convert number
+	int16ToStr( in, tmpStr );
+
+	// Find final null, and move it
+	pad( tmpStr, sizeof(tmpStr) );
+
+	// Print number
+	dPrintStr( tmpStr );
+}
+
 void printInt32( uint32_t in )
 {
 	// Max number of characters is 10 + 1 for null
@@ -111,6 +166,66 @@ void printInt32( uint32_t in )
 
 	// Convert number
 	int32ToStr( in, tmpStr );
+
+	// Print number
+	dPrintStr( tmpStr );
+}
+
+void printSInt32( int32_t in )
+{
+	// Max number of characters is 11 + 1 for null
+	char tmpStr[12];
+
+	// Convert number
+	sint32ToStr( in, tmpStr );
+
+	// Print number
+	dPrintStr( tmpStr );
+}
+
+void printInt32Pad( uint32_t in )
+{
+	// Max number of characters is 10 + 1 for null
+	char tmpStr[11];
+
+	// Convert number
+	int32ToStr( in, tmpStr );
+
+	// Find final null, and move it
+	pad( tmpStr, sizeof(tmpStr) );
+
+	// Print number
+	dPrintStr( tmpStr );
+}
+
+void printDecimal32( uint32_t in, uint32_t mul )
+{
+	// Max number of characters is 10 + 1 + 1 for null and decimal
+	char tmpStr[12];
+
+	// Determine number of decimal places
+	int32_t places = mul / 10;
+
+	// Convert base to a string
+	int32ToStr( in, tmpStr );
+
+	// Ignore if no decimal places
+	if ( places > 0 && tmpStr[0] != '\0' )
+	{
+		// Find final null
+		uint8_t null_pos = 0;
+		while ( tmpStr[++null_pos] != '\0' );
+
+		// Move least significant digit over 1 while places is greater than 0
+		while ( places-- + 1 > 0 )
+		{
+			tmpStr[null_pos + 1] = tmpStr[null_pos];
+			null_pos--;
+		}
+
+		// Place decimal
+		tmpStr[null_pos + 1] = '.';
+	}
 
 	// Print number
 	dPrintStr( tmpStr );
@@ -142,6 +257,13 @@ void printHex32_op( uint32_t in, uint8_t op )
 
 	// Print number
 	dPrintStr( tmpStr );
+}
+
+void printTime( Time time )
+{
+	printInt32( time.ms );
+	print(":");
+	printInt32( time.ticks );
 }
 
 
@@ -201,6 +323,41 @@ void int32ToStr( uint32_t in, char* out )
 		out[pos++] = in % 10 + '0';
 	}
 	while ( (in /= 10) > 0 );
+
+	// Append null
+	out[pos] = '\0';
+
+	// Reverse the string to the correct order
+	revsStr(out);
+}
+
+
+void sint32ToStr( int32_t in, char* out )
+{
+	// Position and sign containers
+	uint32_t pos;
+	pos = 0;
+
+	// Check if negative
+	uint8_t neg = 0;
+	if ( in < 0 )
+	{
+		neg = 1;
+		in = -in; // Convert number to positive
+	}
+
+	// Evaluate through digits as decimal
+	do
+	{
+		out[pos++] = in % 10 + '0';
+	}
+	while ( (in /= 10) > 0 );
+
+	// Append - if negative
+	if ( neg )
+	{
+		out[pos++] = '-';
+	}
 
 	// Append null
 	out[pos] = '\0';

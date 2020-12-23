@@ -1,16 +1,16 @@
-/* Copyright (C) 2014-2018 by Jacob Alexander
+/* Copyright (C) 2014-2020 by Jacob Alexander
  *
  * This file is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
+ * it under the terms of the GNU Lesser General Public License as published by
  * the Free Software Foundation, either version 3 of the License, or
  * (at your option) any later version.
  *
  * This file is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+ * GNU Lesser General Public License for more details.
  *
- * You should have received a copy of the GNU General Public License
+ * You should have received a copy of the GNU Lesser General Public License
  * along with this file.  If not, see <http://www.gnu.org/licenses/>.
  */
 
@@ -105,9 +105,12 @@ typedef uint8_t state_uint_t;
 // States:
 //   * Press/Hold/Release/Off - PHRO
 //   * Start/On/Stop/Off      - AODO
+//   * Increase/Descrease/Off - IDO
 //   * Done/Repeat/Off        - DRO
 //   * Threshold (Range)      - 0x01 (Released), 0x02 (Pressed), 0x10 (Light press), 0xFF (Max press) (Threashold)
-//   * Debug                  - 0xFF (Print capability name)
+//   * Layer Info             - 0x10 (Shift), 0x20 (Latch), 0x40 (Lock) -> May be activated simultaneously with AODO
+//   * Generic                - 0x80 Used in KLL when a state is not specified and KLL should figure out what to do
+//   * Debug                  - 0xFF (Print capability name)A
 //
 // States with the same numerical value have same/similar function, but is called something else in that case.
 //
@@ -124,8 +127,19 @@ typedef enum ScheduleState {
 	ScheduleType_D      = 0x03, // Deactivate
 	ScheduleType_Off    = 0x00, // Off
 
+	ScheduleType_Inc    = 0x01, // Increase
+	ScheduleType_Dec    = 0x02, // Decrease
+
 	ScheduleType_Done   = 0x06, // Done
 	ScheduleType_Repeat = 0x07, // Repeat
+
+	ScheduleType_Shift  = 0x10, // Shift
+	ScheduleType_Latch  = 0x20, // Latch
+	ScheduleType_Lock   = 0x40, // Lock
+
+	ScheduleType_Gen    = 0x80, // Generic Trigger (Usually means Press, but can mean Press, Hold)
+	                            // This is the default trigger used by the KLL compiler
+				    // Can be combined with other states if necessary
 
 	ScheduleType_Debug  = 0xFF, // Print capability name
 } ScheduleState;
@@ -147,25 +161,19 @@ typedef enum CapabilityState {
 	CapabilityState_Debug   = 0xFF, // Debug trigger
 } CapabilityState;
 
-// Schedule parameter container
+// Schedule container
 // time   - Time constraints for parameter
 //          Set to 0.0 if unused
 // state  - Required state condition
 // analog - Analog threshold condition
-typedef struct ScheduleParam {
+// index  - Used for rotation state
+typedef struct Schedule {
 	Time time; // ms systick + cycletick (e.g. 13.889 ns per tick for 72 MHz)
 	union {
 		ScheduleState state;
 		uint8_t analog;
+		uint8_t index;
 	};
-} ScheduleParam;
-
-// Main schedule container
-// params - Pointer to list of ScheduleParams
-// count  - Number of ScheduleParams
-typedef struct Schedule {
-	ScheduleParam *params;
-	uint8_t count;
 } Schedule;
 
 // TODO Add to KLL, compute based on number of schedules
@@ -185,7 +193,7 @@ typedef struct ScheduleLookup {
 // Default Args (always sent): key state/analog of last key
 // Combo Length of 0 signifies end of sequence
 //
-// ResultMacro.guide -> [<combo length>|<capability index>|<arg1>|<argn>|<capability index>|...|<combo length>|...|0]
+// ResultMacro.guide -> [<combo length>|<capability index>|<state>|<arg1>|<argn>|<capability index>|...|<combo length>|...|0]
 //
 // ResultMacroRecord.pos       -> <current combo position>
 // ResultMacroRecord.prevPos   -> <previous combo position>
@@ -207,8 +215,9 @@ typedef struct ResultMacroRecord {
 // Guide, key element
 #define ResultGuideSize( guidePtr ) sizeof( ResultGuide ) - 1 + CapabilitiesList[ (guidePtr)->index ].argCount
 typedef struct ResultGuide {
-	uint8_t index;
-	uint8_t args; // This is used as an array pointer (but for packing purposes, must be 8 bit)
+	uint8_t      index;
+	//state_uint_t state; // TODO
+	uint8_t      args; // This is used as an array pointer (but for packing purposes, must be 8 bit)
 } ResultGuide;
 
 
@@ -234,7 +243,13 @@ typedef struct ResultGuide {
 //   * 0x0E Animation Bank 2 ( 256- 511) [DRO]
 //   * 0x0F Animation Bank 3 ( 512- 767) [DRO]
 //   * 0x10 Animation Bank 4 ( 768-1023) [DRO]
-//   * 0x11-0xFE Reserved
+//   * 0x11 Sleep Bank 1     (   0- 255) [AODO]
+//   * 0x12 Resume Bank 1    (   0- 255) [AODO]
+//   * 0x13 Inactive Bank 1  (   0- 255) [AODO]
+//   * 0x14 Active Bank 1    (   0- 255) [AODO]
+//   * 0x15 Rotation Bank 1  (   0- 255) [AODO]
+//   * 0x16 Dial Bank 1      (   0- 255) [IDO]
+//   * 0x17-0xFE Reserved
 //   * 0xFF Debug State
 //
 // States:
@@ -268,8 +283,14 @@ typedef enum TriggerType {
 	TriggerType_Animation2 = 0x0E,
 	TriggerType_Animation3 = 0x0F,
 	TriggerType_Animation4 = 0x10,
+	TriggerType_Sleep1     = 0x11,
+	TriggerType_Resume1    = 0x12,
+	TriggerType_Inactive1  = 0x13,
+	TriggerType_Active1    = 0x14,
+	TriggerType_Rotation1  = 0x15,
+	TriggerType_Dial1      = 0x16,
 
-	/* Reserved 0x11-0xFE */
+	/* Reserved 0x17-0xFE */
 
 	TriggerType_Debug   = 0xFF,
 } TriggerType;
@@ -309,7 +330,7 @@ typedef struct TriggerGuide {
 // Used for incoming Trigger events
 typedef struct TriggerEvent {
 	TriggerType   type;
-	ScheduleState state;
+	state_uint_t  state;
 	uint8_t       index;
 } TriggerEvent;
 
@@ -359,6 +380,7 @@ typedef struct Capability {
 // Guide_RM / Define_RM Pair
 // Guide_RM( index ) = result;
 //  * index  - Result Macro index number
+//  * state  - Result Macro state index
 //  * result - Result Macro guide (see ResultMacro)
 // Define_RM( index );
 //  * index  - Result Macro index number
@@ -451,6 +473,15 @@ typedef struct Layer {
 
 // Total number of layers (generated by KLL)
 #define LayerNum LayerNum_KLL
+
+
+
+// ----- Rotation Parameters -----
+
+// Rotations require two bounds
+// 1) The total number rotation states to maintain
+// 2) For each rotation uid, when to wrap-around the rotation
+#define RotationNum RotationNum_KLL
 
 
 

@@ -1,4 +1,4 @@
-/* Copyright (C) 2014-2018 by Jacob Alexander
+/* Copyright (C) 2014-2020 by Jacob Alexander
  *
  * This file is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -39,6 +39,10 @@
 
 
 // ----- Function Declarations -----
+
+void Layer_clearLayers();
+
+
 
 // ----- Variables -----
 
@@ -130,17 +134,20 @@ void Layer_layerStateSet( TriggerMacro *trigger, uint8_t state, uint8_t stateTyp
 	if ( oldState && newState )
 	{
 		// On -> On (Layer still active)
-		Macro_layerState( layer, ScheduleType_On );
+		// Send current layer state
+		Macro_layerState( layer, ScheduleType_On | (LayerState[ layer ] << 4) );
 	}
 	else if ( !oldState && newState )
 	{
 		// Off -> On (Activate)
-		Macro_layerState( layer, ScheduleType_A );
+		// Send layer state that activated
+		Macro_layerState( layer, ScheduleType_A | (layerState << 4) );
 	}
 	else if ( oldState && !newState )
 	{
 		// On -> Off (Deactivate)
-		Macro_layerState( layer, ScheduleType_D );
+		// Send layer state that deactivated
+		Macro_layerState( layer, ScheduleType_D | (layerState << 4) );
 	}
 
 	// Layer Debug Mode
@@ -184,6 +191,14 @@ void Layer_layerState_capability( TriggerMacro *trigger, uint8_t state, uint8_t 
 	case CapabilityState_Debug:
 		// Display capability name
 		print("Layer_layerState(layerIndex,layerState)");
+
+		// Read arg if not set to 0
+		if ( args != 0 )
+		{
+			uint16_t key = *(uint16_t*)(&args[0]);
+			print(" -> ");
+			printInt16( key );
+		}
 		return;
 	default:
 		return;
@@ -214,6 +229,14 @@ void Layer_layerLatch_capability( TriggerMacro *trigger, uint8_t state, uint8_t 
 	case CapabilityState_Debug:
 		// Display capability name
 		print("Layer_layerLatch(layerIndex)");
+
+		// Read arg if not set to 0
+		if ( args != 0 )
+		{
+			uint16_t key = *(uint16_t*)(&args[0]);
+			print(" -> ");
+			printInt16( key );
+		}
 		return;
 	default:
 		return;
@@ -241,6 +264,14 @@ void Layer_layerLock_capability( TriggerMacro *trigger, uint8_t state, uint8_t s
 	case CapabilityState_Debug:
 		// Display capability name
 		print("Layer_layerLock(layerIndex)");
+
+		// Read arg if not set to 0
+		if ( args != 0 )
+		{
+			uint16_t key = *(uint16_t*)(&args[0]);
+			print(" -> ");
+			printInt16( key );
+		}
 		return;
 	default:
 		return;
@@ -267,24 +298,42 @@ void Layer_layerShift_capability( TriggerMacro *trigger, uint8_t state, uint8_t 
 	switch ( cstate )
 	{
 	case CapabilityState_Initial:
+		// Ignore if layer does not exist or trying to manipulate layer 0/Default layer
+		if ( layer >= LayerNum || layer == 0 )
+			return;
+
 		// Press
 		// Only set the layer if it is disabled
 		if ( (LayerState[ layer ] & LayerStateType_Shift) != LayerStateType_Off )
 		{
+			Layer_layerStateSet( trigger, state, stateType, layer, LayerStateType_Off );
 			return;
 		}
 		break;
 	case CapabilityState_Last:
+		// Ignore if layer does not exist or trying to manipulate layer 0/Default layer
+		if ( layer >= LayerNum || layer == 0 )
+			return;
+
 		// Release
 		// Only unset the layer if it is enabled
 		if ( (LayerState[ layer ] & LayerStateType_Shift) == LayerStateType_Off )
 		{
+			Layer_layerStateSet( trigger, state, stateType, layer, LayerStateType_Off );
 			return;
 		}
 		break;
 	case CapabilityState_Debug:
 		// Display capability name
 		print("Layer_layerShift(layerIndex)");
+
+		// Read arg if not set to 0
+		if ( args != 0 )
+		{
+			uint16_t key = *(uint16_t*)(&args[0]);
+			print(" -> ");
+			printInt16( key );
+		}
 	default:
 		return;
 	}
@@ -308,6 +357,14 @@ void Layer_layerRotate_capability( TriggerMacro *trigger, uint8_t state, uint8_t
 	case CapabilityState_Debug:
 		// Display capability name
 		print("Layer_layerRotate(previous)");
+
+		// Read arg if not set to 0
+		if ( args != 0 )
+		{
+			uint8_t key = args[0];
+			print(" -> ");
+			printInt8( key );
+		}
 		return;
 	default:
 		return;
@@ -345,6 +402,29 @@ void Layer_layerRotate_capability( TriggerMacro *trigger, uint8_t state, uint8_t
 	Layer_layerStateSet( trigger, state, stateType, Layer_rotationLayer, LayerStateType_Lock );
 }
 
+
+// Clear layer states
+// XXX (HaaTa): Does not send trigger events
+void Layer_clearLayers_capability( TriggerMacro *trigger, uint8_t state, uint8_t stateType, uint8_t *args )
+{
+	CapabilityState cstate = KLL_CapabilityState( state, stateType );
+
+	switch ( cstate )
+	{
+	case CapabilityState_Initial:
+		// Only use capability on press
+		break;
+	case CapabilityState_Debug:
+		// Display capability name
+		print("Layer_clearLayers()");
+		return;
+	default:
+		return;
+	}
+
+	// Clear layer states
+	Layer_clearLayers();
+}
 
 
 // ----- Functions -----
@@ -413,16 +493,6 @@ nat_ptr_t *Layer_layerLookup( TriggerEvent *event, uint8_t latch_expire )
 		if ( latch && latch_expire )
 		{
 			Layer_layerStateSet( 0, 0, 0, cachedLayer, LayerStateType_Latch );
-#if defined(ConnectEnabled_define) && defined(LCDEnabled_define)
-			// Evaluate the layerStack capability if available (LCD + Interconnect)
-			extern void LCD_layerStack_capability(
-				TriggerMacro *trigger,
-				uint8_t state,
-				uint8_t stateType,
-				uint8_t *args
-			);
-			LCD_layerStack_capability( 0, 0, 0, 0 );
-#endif
 		}
 
 		return trigger_list;
@@ -431,6 +501,19 @@ nat_ptr_t *Layer_layerLookup( TriggerEvent *event, uint8_t latch_expire )
 	// If no trigger macro is defined at the given layer, fallthrough to the next layer
 	for ( uint16_t layerIndex = macroLayerIndexStackSize; layerIndex != 0xFFFF; layerIndex-- )
 	{
+		// If this is a Layer trigger event, ignore other layers, always check the default map
+		switch ( event->type )
+		{
+		case TriggerType_Layer1:
+		case TriggerType_Layer2:
+		case TriggerType_Layer3:
+		case TriggerType_Layer4:
+			layerIndex = 0;
+			continue;
+		default:
+			break;
+		}
+
 		// Lookup Layer
 		const Layer *layer = &LayerIndex[ macroLayerIndexStack[ layerIndex ] ];
 
@@ -488,9 +571,20 @@ nat_ptr_t *Layer_layerLookup( TriggerEvent *event, uint8_t latch_expire )
 	}
 
 	// Otherwise no defined Trigger Macro
-	erro_msg("Index has no defined Trigger Macro: ");
-	printHex( index );
-	print( NL );
+	// Just ignore it
+	return 0;
+}
+
+// Layer active at top of the stack
+index_uint_t Layer_topActive()
+{
+	// Top of stack
+	if ( macroLayerIndexStackSize > 0 )
+	{
+		return macroLayerIndexStack[macroLayerIndexStackSize - 1];
+	}
+
+	// Default layer
 	return 0;
 }
 

@@ -6,6 +6,87 @@
 #
 ###
 
+include_directories(
+	"Lib/CMSIS/Include"
+	"Lib/CMSIS/Lib/GCC"
+)
+
+if ( "${CHIP_SUPPORT}" MATCHES "sam" )
+include_directories(
+	"Lib/ASF"
+	"Lib/ASF/config"
+	"Lib/ASF/common/boards"
+	"Lib/ASF/sam/boards"
+	"Lib/ASF/sam/utils"
+	"Lib/ASF/sam/utils/cmsis/sam4s/include"
+	"Lib/ASF/sam/utils/header_files"
+	"Lib/ASF/sam/utils/preprocessor"
+)
+
+add_definitions(
+	-D__SAM4S8C__
+	-DBOARD=SAM4S_XPLAINED_PRO
+	-DUDD_ENABLE
+)
+endif ( )
+
+if ( "${CHIP_SUPPORT}" MATCHES "nrf5" )
+link_directories(
+	"${CMAKE_SOURCE_DIR}/Lib/nRF5_SDK/components/toolchain/gcc"
+	"${CMAKE_SOURCE_DIR}/Lib/nRF5_SDK/modules/nrfx/mdk"
+)
+
+include_directories(
+	"Lib/nRF5_SDK/components"
+	"Lib/nRF5_SDK/components/boards"
+	"Lib/nRF5_SDK/components/drivers_nrf/nrf_soc_nosd"
+	"Lib/nRF5_SDK/components/libraries/atomic"
+	"Lib/nRF5_SDK/components/libraries/balloc"
+	"Lib/nRF5_SDK/components/libraries/bsp"
+	"Lib/nRF5_SDK/components/libraries/button"
+	"Lib/nRF5_SDK/components/libraries/delay"
+	"Lib/nRF5_SDK/components/libraries/experimental_section_vars"
+	"Lib/nRF5_SDK/components/libraries/gfx"
+	"Lib/nRF5_SDK/components/libraries/log"
+	"Lib/nRF5_SDK/components/libraries/log/src"
+	"Lib/nRF5_SDK/components/libraries/memobj"
+	"Lib/nRF5_SDK/components/libraries/mutex"
+	"Lib/nRF5_SDK/components/libraries/pwr_mgmt"
+	"Lib/nRF5_SDK/components/libraries/queue"
+	"Lib/nRF5_SDK/components/libraries/ringbuf"
+	"Lib/nRF5_SDK/components/libraries/scheduler"
+	"Lib/nRF5_SDK/components/libraries/spi_mngr"
+	"Lib/nRF5_SDK/components/libraries/strerror"
+	"Lib/nRF5_SDK/components/libraries/timer"
+	"Lib/nRF5_SDK/components/libraries/util"
+	"Lib/nRF5_SDK/components/toolchain/cmsis/include"
+	"Lib/nRF5_SDK/config"
+	"Lib/nRF5_SDK/external/fprintf"
+	"Lib/nRF5_SDK/external/segger_rtt"
+	"Lib/nRF5_SDK/external/thedotfactory_fonts"
+	"Lib/nRF5_SDK/integration/nrfx"
+	"Lib/nRF5_SDK/integration/nrfx/legacy"
+	"Lib/nRF5_SDK/modules/nrfx"
+	"Lib/nRF5_SDK/modules/nrfx/drivers/include"
+	"Lib/nRF5_SDK/modules/nrfx/hal"
+	"Lib/nRF5_SDK/modules/nrfx/mdk"
+)
+
+add_definitions(
+	-DBOARD_PCA10040
+	-DCONFIG_GPIO_AS_PINRESET
+	-DFLOAT_ABI_HARD
+	-DNRF52
+	-DNRF52832_XXAA
+	-DNRF52_PAN_74
+	-D__HEAP_SIZE=8192
+	-D__STACK_SIZE=8192
+	-D__START=main
+	-D__STARTUP_CLEAR_BSS
+	--specs=nano.specs
+)
+endif ( )
+
 
 ###
 # Disable -Wl,-search_paths_first for OSX (not supported by avr-gcc or arm-none-eabi-gcc)
@@ -71,20 +152,6 @@ else ()
 endif ()
 
 
-#| Convert the .ELF Into a .bin
-if ( JLINK )
-	set( TARGET_BIN ${TARGET}.jlink.bin )
-	set(
-		TARGET_ADDRESS "0x0"
-		CACHE STRING "Firmware starting address"
-	)
-	add_custom_command( TARGET ${TARGET} POST_BUILD
-		COMMAND ${OBJ_COPY} ${BIN_FLAGS} ${TARGET_OUT} ${TARGET_BIN}
-		COMMENT "Create jlink bin file: ${TARGET_BIN}"
-	)
-endif ()
-
-
 #| Convert the .ELF into a .bin to load onto the McHCK
 #| Then sign using dfu-suffix (requries dfu-util)
 if ( DEFINED DFU )
@@ -126,8 +193,26 @@ if ( DEFINED DFU )
 endif ()
 
 
+#| Convert the .ELF Into a .bin
+if ( JLINK )
+	set( TARGET_BIN ${TARGET}.jlink.bin )
+	set( TARGET_HEX ${TARGET}.jlink.hex )
+	set(
+		TARGET_ADDRESS "0x0"
+		CACHE STRING "Firmware starting address"
+	)
+	add_custom_command( TARGET ${TARGET} POST_BUILD
+		COMMAND ${OBJ_COPY} -O binary ${TARGET_OUT} ${TARGET_BIN}
+		COMMAND ${OBJ_COPY} -O ihex ${TARGET_OUT} ${TARGET_HEX}
+		COMMENT "Create jlink bin file: ${TARGET_BIN}"
+		COMMENT "Create jlink hex file: ${TARGET_HEX}"
+	)
+endif ()
+
+
+
 #| Convert the .ELF into a .HEX to load onto the Teensy
-if ( DEFINED TEENSY )
+if ( DEFINED TEENSY OR DEFINED NORDIC )
 	set( TARGET_HEX ${TARGET}.teensy.hex )
 	add_custom_command( TARGET ${TARGET} POST_BUILD
 		COMMAND ${OBJ_COPY} ${HEX_FLAGS} ${TARGET_OUT} ${TARGET_HEX}
@@ -136,25 +221,34 @@ if ( DEFINED TEENSY )
 endif()
 
 
-#| Generate the Extended .LSS
-set( TARGET_LSS ${TARGET}.lss )
-add_custom_command( TARGET ${TARGET} POST_BUILD
-	COMMAND ${CMAKE_OBJDUMP} ${LSS_FLAGS} ${TARGET_OUT} > ${TARGET_LSS}
-	COMMENT "Creating Extended Listing:     ${TARGET_LSS}"
-)
+
+###
+# objdump files
+# Useful if objdump is available
+#
+find_package( Objdump )
+
+if ( OBJDUMP_FOUND )
+	# Generate the Extended .LSS
+	set( TARGET_LSS ${TARGET}.lss )
+	add_custom_command( TARGET ${TARGET} POST_BUILD
+		COMMAND ${CMAKE_OBJDUMP} ${LSS_FLAGS} ${TARGET_OUT} > ${TARGET_LSS}
+		COMMENT "Creating Extended Listing:     ${TARGET_LSS}"
+	)
 
 
-#| Generate the Symbol Table .SYM
-set( TARGET_SYM ${TARGET}.sym )
-add_custom_command( TARGET ${TARGET} POST_BUILD
-	COMMAND ${CMAKE_NM} -n ${TARGET_OUT} > ${TARGET_SYM}
-	COMMENT "Creating Symbol Table:         ${TARGET_SYM}"
-)
+	# Generate the Symbol Table .SYM
+	set( TARGET_SYM ${TARGET}.sym )
+	add_custom_command( TARGET ${TARGET} POST_BUILD
+		COMMAND ${CMAKE_NM} -n ${TARGET_OUT} > ${TARGET_SYM}
+		COMMENT "Creating Symbol Table:         ${TARGET_SYM}"
+	)
+endif ()
 
 
 #| Compiler Selection Record
 add_custom_command( TARGET ${TARGET} POST_BUILD
-	COMMAND ${CMAKE_SOURCE_DIR}/Lib/CMake/writer compiler ${COMPILER_FAMILY}
+	COMMAND /usr/bin/env bash ${CMAKE_SOURCE_DIR}/Lib/CMake/writer compiler ${COMPILER_FAMILY}
 )
 
 
@@ -166,8 +260,8 @@ add_custom_command( TARGET ${TARGET} POST_BUILD
 if ( NOT DEFINED HOST )
 	# After Changes Size Information
 	add_custom_target( SizeAfter ALL
-		COMMAND ${CMAKE_SOURCE_DIR}/Lib/CMake/sizeCalculator ${CMAKE_SIZE} ram   ${TARGET_OUT} ${SIZE_RAM}   " SRAM"
-		COMMAND ${CMAKE_SOURCE_DIR}/Lib/CMake/sizeCalculator ${CMAKE_SIZE} flash ${TARGET_OUT} ${SIZE_FLASH} "Flash"
+		COMMAND /usr/bin/env bash ${CMAKE_SOURCE_DIR}/Lib/CMake/sizeCalculator ${CMAKE_SIZE} ram   ${TARGET_OUT} ${SIZE_RAM}   " SRAM"
+		COMMAND /usr/bin/env bash ${CMAKE_SOURCE_DIR}/Lib/CMake/sizeCalculator ${CMAKE_SIZE} flash ${TARGET_OUT} ${SIZE_FLASH} "Flash"
 		DEPENDS ${TARGET}
 		COMMENT "Chip usage for ${CHIP}"
 	)
@@ -175,7 +269,7 @@ if ( NOT DEFINED HOST )
 	# DFU Specific message
 	if ( DEFINED DFU )
 		add_custom_target( DFUMessage ALL
-			COMMAND ${CMAKE_SOURCE_DIR}/Lib/CMake/dfuMessage ${TARGET}
+			COMMAND /usr/bin/env bash ${CMAKE_SOURCE_DIR}/Lib/CMake/dfuMessage ${TARGET}
 			DEPENDS ${TARGET}
 			COMMENT "Message for DFU targets"
 		)
@@ -191,9 +285,16 @@ endif ()
 #| First check for JLink based dev kits
 if ( JLINK )
 	configure_file( LoadFile/load.jlink load NEWLINE_STYLE UNIX )
+	configure_file( LoadFile/dump.jlink dump NEWLINE_STYLE UNIX @ONLY )
 	configure_file( LoadFile/debug.jlink debug NEWLINE_STYLE UNIX )
 	configure_file( LoadFile/rtt.jlink rtt NEWLINE_STYLE UNIX )
 	configure_file( LoadFile/reset.jlink reset NEWLINE_STYLE UNIX )
+
+#| Next check for nordic based controllers
+elseif( DEFINED NORDIC )
+	configure_file( LoadFile/load.nrf load NEWLINE_STYLE UNIX )
+	configure_file( LoadFile/reset.nrf reset NEWLINE_STYLE UNIX )
+
 
 #| Next check for DFU based controllers
 elseif( DEFINED DFU )
@@ -219,15 +320,4 @@ endif()
 
 #| Generate list of compiler commands for clang-tidy usage
 set( CMAKE_EXPORT_COMPILE_COMMANDS ON )
-
-#| Make sure symlink exists (for convenience)
-if ( UNIX AND NOT DEFINED CONFIGURATOR )
-	# Make sure symlink is created immediately
-	execute_process ( COMMAND ln -sfn ${CMAKE_BINARY_DIR}/compile_commands.json ${CMAKE_SOURCE_DIR}/. )
-
-	# Also update before each build
-	add_custom_command( TARGET ${TARGET} POST_BUILD
-		COMMAND ln -sfn ${CMAKE_BINARY_DIR}/compile_commands.json ${CMAKE_SOURCE_DIR}/.
-	)
-endif ()
 

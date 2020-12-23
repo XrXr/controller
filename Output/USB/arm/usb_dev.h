@@ -1,7 +1,7 @@
 /* Teensyduino Core Library
  * http://www.pjrc.com/teensy/
  * Copyright (c) 2013 PJRC.COM, LLC.
- * Modifications by Jacob Alexander 2014-2016
+ * Modifications by Jacob Alexander 2014-2019
  *
  * Permission is hereby granted, free of charge, to any person obtaining
  * a copy of this software and associated documentation files (the
@@ -64,6 +64,7 @@ void usb_tx( uint32_t endpoint, usb_packet_t *packet );
 void usb_tx_isr( uint32_t endpoint, usb_packet_t *packet );
 
 uint8_t usb_resume();
+uint8_t usb_suspended();
 
 uint32_t usb_tx_byte_count( uint32_t endpoint );
 uint32_t usb_tx_packet_count( uint32_t endpoint );
@@ -73,14 +74,30 @@ usb_packet_t *usb_rx( uint32_t endpoint );
 static inline uint32_t usb_rx_byte_count(uint32_t endpoint) __attribute__((always_inline));
 static inline uint32_t usb_rx_byte_count(uint32_t endpoint)
 {
+#if defined(_kinetis_)
 	endpoint--;
 	if ( endpoint >= NUM_ENDPOINTS )
+	{
 		return 0;
+	}
 	return usb_rx_byte_count_data[ endpoint ];
+
+#elif defined(_sam_)
+	// SAM TODO
+	return 0;
+#endif
 }
+
+#if defined(_sam_)
+void usb_sof_event();
+#endif
+
+void usb_set_sleep_state(bool sleep);
 
 void usb_device_reload();
 void usb_device_check();
+void usb_setup();
+void usb_set_configuration(uint8_t config);
 
 extern void usb_serial_flush_callback();
 

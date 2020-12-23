@@ -1,0 +1,17 @@
+# SAM
+
+Name = SAMCapabilities;
+Version = 0.2;
+Author = "HaaTa (Jacob Alexander) 2019";
+
+# Modified Date
+Date = 2019-04-20;
+
+spiPriority = 111;
+
+# 0 is most urgent
+# See arm_cortex.kll for defaults
+i2cPriority = 112; # NOTE: I2C priority must be higher than USB otherwise ISSI frames get corrupted
+                   #       when there are large streams of USB interrupts (i.e. packets or errors)
+usbPriority = 113;
+

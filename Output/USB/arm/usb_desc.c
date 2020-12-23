@@ -1,7 +1,7 @@
 /* Teensyduino Core Library
  * http://www.pjrc.com/teensy/
  * Copyright (c) 2013 PJRC.COM, LLC.
- * Modified by Jacob Alexander (2013-2017)
+ * Modified by Jacob Alexander (2013-2019)
  *
  * Permission is hereby granted, free of charge, to any person obtaining
  * a copy of this software and associated documentation files (the
@@ -31,15 +31,34 @@
 
 // ----- Includes -----
 
+#include <Lib/mcu_compat.h>
+#include "output_usb.h"
+
 // Local Includes
+#include "usb_dev.h"
 #include "usb_desc.h"
 
 // Generated Includes
 #include <kll_defs.h>
 
+#if defined(_sam_)
+#include <print.h>
+#include <common/services/usb/class/hid/device/generic/udi_hid_generic.h>
+#include <common/services/usb/udc/udi.h>
+#include <common/services/usb/udc/udc_desc.h>
+#endif
+
 
 
 // ----- Macros -----
+
+#ifdef LSB
+#undef LSB
+#endif
+
+#ifdef MSB
+#undef MSB
+#endif
 
 #define LSB(n) ((n) & 255)
 #define MSB(n) (((n) >> 8) & 255)
@@ -114,21 +133,23 @@ static uint8_t keyboard_report_desc[] = {
 	0x75, 0x01,          //   Report Size (1),
 	0x95, 0x08,          //   Report Count (8),
 	0x05, 0x07,          //   Usage Page (Key Codes),
-	0x19, 0xE0,          //   Usage Minimum (224),
-	0x29, 0xE7,          //   Usage Maximum (231),
 	0x15, 0x00,          //   Logical Minimum (0),
 	0x25, 0x01,          //   Logical Maximum (1),
+	0x19, 0xE0,          //   Usage Minimum (224),
+	0x29, 0xE7,          //   Usage Maximum (231),
 	0x81, 0x02,          //   Input (Data, Variable, Absolute),
 
 	// Reserved Byte
 	0x75, 0x08,          //   Report Size (8),
 	0x95, 0x01,          //   Report Count (1),
-	0x81, 0x03,          //   Output (Constant),
+	0x81, 0x03,          //   Input (Constant, Variable, Absolute),
 
 	// LED Report
 	0x75, 0x01,          //   Report Size (1),
 	0x95, 0x05,          //   Report Count (5),
 	0x05, 0x08,          //   Usage Page (LEDs),
+	0x15, 0x00,          //   Logical Minimum (0),
+	0x25, 0x01,          //   Logical Maximum (1),
 	0x19, 0x01,          //   Usage Minimum (1),
 	0x29, 0x05,          //   Usage Maximum (5),
 	0x91, 0x02,          //   Output (Data, Variable, Absolute),
@@ -136,16 +157,16 @@ static uint8_t keyboard_report_desc[] = {
 	// LED Report Padding
 	0x75, 0x03,          //   Report Size (3),
 	0x95, 0x01,          //   Report Count (1),
-	0x91, 0x03,          //   Output (Constant),
+	0x91, 0x03,          //   Output (Constant, Variable, Absolute),
 
 	// Normal Keys
 	0x75, 0x08,          //   Report Size (8),
 	0x95, 0x06,          //   Report Count (6),
-	0x15, 0x00,          //   Logical Minimum (0),
-	0x25, 0x7F,          //   Logical Maximum(104),
 	0x05, 0x07,          //   Usage Page (Key Codes),
+	0x15, 0x00,          //   Logical Minimum (0),
+	0x26, 0xFF, 0x00,    //   Logical Maximum (255), <-- Must be 16-bit send size (unsure why)
 	0x19, 0x00,          //   Usage Minimum (0),
-	0x29, 0x7F,          //   Usage Maximum (104),
+	0x29, 0xFF,          //   Usage Maximum (255),
 	0x81, 0x00,          //   Input (Data, Array),
 	0xc0,                // End Collection - Keyboard
 };
@@ -158,10 +179,11 @@ static uint8_t nkro_keyboard_report_desc[] = {
 	0xA1, 0x01,          // Collection (Application) - Keyboard,
 
 	// LED Report
-	0x85, 0x01,          //   Report ID (1),
 	0x75, 0x01,          //   Report Size (1),
 	0x95, 0x05,          //   Report Count (5),
 	0x05, 0x08,          //   Usage Page (LEDs),
+	0x15, 0x00,          //   Logical Minimum (0),
+	0x25, 0x01,          //   Logical Maximum (1),
 	0x19, 0x01,          //   Usage Minimum (1),
 	0x29, 0x05,          //   Usage Maximum (5),
 	0x91, 0x02,          //   Output (Data, Variable, Absolute),
@@ -169,7 +191,7 @@ static uint8_t nkro_keyboard_report_desc[] = {
 	// LED Report Padding
 	0x75, 0x03,          //   Report Size (3),
 	0x95, 0x01,          //   Report Count (1),
-	0x91, 0x03,          //   Output (Constant),
+	0x91, 0x03,          //   Output (Constant, Variable, Absolute),
 
 	// Normal Keys - Using an NKRO Bitmap
 	//
@@ -179,8 +201,6 @@ static uint8_t nkro_keyboard_report_desc[] = {
 	// See http://www.usb.org/developers/hidpage/Hut1_12v2.pdf Chapter 10
 	// Or Macros/PartialMap/usb_hid.h
 	//
-	// 50 (ISO \ due to \ bug) and 156 (Clear due to Delete bug) must be excluded
-	//  due to a Linux bug with bitmaps (not useful anyways)
 	// 165-175 are reserved/unused as well as 222-223 and 232-65535
 	//
 	// Compatibility Notes:
@@ -193,13 +213,11 @@ static uint8_t nkro_keyboard_report_desc[] = {
 	//  - Mac OSX and Windows 8.1 are extremely picky about padding
 	//
 	// Packing of bitmaps are as follows:
-	//   4-49  :  6 bytes (0x04-0x31) ( 46 bits + 2 padding bits for 6 bytes total)
-	//  51-155 : 14 bytes (0x33-0x9B) (105 bits + 6 padding bits for 15 bytes total)
-	// 157-164 :  1 byte  (0x9D-0xA4) (  8 bits)
+	//   4-164 : 21 bytes (0x04-0xA4) (161 bits + 4 padding bits + 3 padding bits for 21 bytes total)
 	// 176-221 :  6 bytes (0xB0-0xDD) ( 46 bits + 2 padding bits for 6 bytes total)
 	// 224-231 :  1 byte  (0xE0-0xE7) (  8 bits)
 
-	// Modifier Byte
+	// 224-231 (1 byte/8 bits) - Modifier Section
 	0x75, 0x01,          //   Report Size (1),
 	0x95, 0x08,          //   Report Count (8),
 	0x15, 0x00,          //   Logical Minimum (0),
@@ -207,49 +225,30 @@ static uint8_t nkro_keyboard_report_desc[] = {
 	0x05, 0x07,          //   Usage Page (Key Codes),
 	0x19, 0xE0,          //   Usage Minimum (224),
 	0x29, 0xE7,          //   Usage Maximum (231),
-	0x81, 0x02,          //   Input (Data, Variable, Absolute),
+	0x81, 0x02,          //   Input (Data, Variable, Absolute, Bitfield),
 
-	// 4-49 (6 bytes/46 bits) - MainKeys
+	// Padding (4 bits)
+	// Ignores Codes 0-3 (Keyboard Status codes)
+	0x75, 0x04,          //   Report Size (4),
+	0x95, 0x01,          //   Report Count (1),
+	0x81, 0x03,          //   Input (Constant),
+
+	// 4-164 (21 bytes/161 bits + 4 bits + 3 bits) - Keyboard Section
 	0x75, 0x01,          //   Report Size (1),
-	0x95, 0x2E,          //   Report Count (46),
+	0x95, 0xA1,          //   Report Count (161),
 	0x15, 0x00,          //   Logical Minimum (0),
 	0x25, 0x01,          //   Logical Maximum (1),
 	0x05, 0x07,          //   Usage Page (Key Codes),
 	0x19, 0x04,          //   Usage Minimum (4),
-	0x29, 0x31,          //   Usage Maximum (49),
-	0x81, 0x02,          //   Input (Data, Variable, Absolute, Bitfield),
-
-	// Padding (2 bits)
-	0x75, 0x02,          //   Report Size (2),
-	0x95, 0x01,          //   Report Count (1),
-	0x81, 0x03,          //   Input (Constant),
-
-	// 51-155 (14 bytes/105 bits) - SecondaryKeys
-	0x75, 0x01,          //   Report Size (1),
-	0x95, 0x69,          //   Report Count (105),
-	0x15, 0x00,          //   Logical Minimum (0),
-	0x25, 0x01,          //   Logical Maximum (1),
-	0x05, 0x07,          //   Usage Page (Key Codes),
-	0x19, 0x33,          //   Usage Minimum (51),
-	0x29, 0x9B,          //   Usage Maximum (155),
-	0x81, 0x02,          //   Input (Data, Variable, Absolute, Bitfield),
-
-	// Padding (7 bits)
-	0x75, 0x07,          //   Report Size (7),
-	0x95, 0x01,          //   Report Count (1),
-	0x81, 0x03,          //   Input (Constant),
-
-	// 157-164 (1 byte/8 bits) - TertiaryKeys
-	0x75, 0x01,          //   Report Size (1),
-	0x95, 0x08,          //   Report Count (8),
-	0x15, 0x00,          //   Logical Minimum (0),
-	0x25, 0x01,          //   Logical Maximum (1),
-	0x05, 0x07,          //   Usage Page (Key Codes),
-	0x19, 0x9D,          //   Usage Minimum (157),
 	0x29, 0xA4,          //   Usage Maximum (164),
 	0x81, 0x02,          //   Input (Data, Variable, Absolute, Bitfield),
 
-	// 176-221 (6 bytes/46 bits) - QuartiaryKeys
+	// Padding (3 bits)
+	0x75, 0x03,          //   Report Size (3),
+	0x95, 0x01,          //   Report Count (1),
+	0x81, 0x03,          //   Input (Constant),
+
+	// 176-221 (6 bytes/46 bits) - Keypad Section
 	0x75, 0x01,          //   Report Size (1),
 	0x95, 0x2E,          //   Report Count (46),
 	0x15, 0x00,          //   Logical Minimum (0),
@@ -263,47 +262,42 @@ static uint8_t nkro_keyboard_report_desc[] = {
 	0x75, 0x02,          //   Report Size (2),
 	0x95, 0x01,          //   Report Count (1),
 	0x81, 0x03,          //   Input (Constant),
-	0xc0,                // End Collection - Keyboard
+	0xC0,                // End Collection - Keyboard
 };
 
 // System Control and Consumer Control
+// XXX (HaaTa): Do not mess with this descriptor, any changes (even minor) seem to break MS Windows compatibility.
 static uint8_t sys_ctrl_report_desc[] = {
-	// System Control Collection (8 bits)
-	//
-	// NOTES:
-	// Not bothering with NKRO for this table. If there's need, I can implement it. -HaaTa
-	// Using a 1KRO scheme
-	0x05, 0x01,          // Usage Page (Generic Desktop),
-	0x09, 0x80,          // Usage (System Control),
-	0xA1, 0x01,          // Collection (Application),
-	0x85, 0x02,          //   Report ID (2),
-	0x75, 0x08,          //   Report Size (8),
-	0x95, 0x01,          //   Report Count (1),
-	0x16, 0x81, 0x00,    //   Logical Minimum (129),
-	0x26, 0xB7, 0x00,    //   Logical Maximum (183),
-	0x19, 0x81,          //   Usage Minimum (129),
-	0x29, 0xB7,          //   Usage Maximum (183),
-	0x81, 0x00,          //   Input (Data, Array),
-	0xc0,                // End Collection - System Control
-
 	// Consumer Control Collection - Media Keys (16 bits)
 	//
 	// NOTES:
 	// Not bothering with NKRO for this table. If there's a need, I can implement it. -HaaTa
 	// Using a 1KRO scheme
-	0x05, 0x0c,          // Usage Page (Consumer),
-	0x09, 0x01,          // Usage (Consumer Control),
+	0x05, 0x0C,          //  Usage Page (Consumer),
+	0x09, 0x01,          //  Usage (Consumer Control),
 	0xA1, 0x01,          // Collection (Application),
-	0x85, 0x03,          //   Report ID (3),
 	0x75, 0x10,          //   Report Size (16),
 	0x95, 0x01,          //   Report Count (1),
-	0x16, 0x01, 0x00,    //   Logical Minimum (1),
+	0x15, 0x00,          //   Logical Minimum (0),
 	0x26, 0x9D, 0x02,    //   Logical Maximum (669),
-	0x05, 0x0C,          //   Usage Page (Consumer),
-	0x19, 0x01,          //   Usage Minimum (1),
+	0x19, 0x00,          //   Usage Minimum (0),
 	0x2A, 0x9D, 0x02,    //   Usage Maximum (669),
 	0x81, 0x00,          //   Input (Data, Array),
-	0xc0,                // End Collection - Consumer Control
+
+	// System Control Collection (8 bits)
+	//
+	// NOTES:
+	// Not bothering with NKRO for this table. If there's need, I can implement it. -HaaTa
+	// Using a 1KRO scheme
+	0x05, 0x01,          //  Usage Page (Generic Desktop),
+	0x75, 0x08,          //   Report Size (8),
+	0x95, 0x01,          //   Report Count (1),
+	0x15, 0x01,          //   Logical Minimum (1), <-- Must start from 1 to resolve MS Windows problems
+	0x25, 0x37,          //   Logical Maximum (55),
+	0x19, 0x81,          //   Usage Minimum (129), <-- Must be 0x81/129 to fix macOS scrollbar issues
+	0x29, 0xB7,          //   Usage Maximum (183),
+	0x81, 0x00,          //   Input (Data, Array),
+	0xC0,                // End Collection - Consumer Control
 };
 #endif
 
@@ -312,23 +306,23 @@ static uint8_t sys_ctrl_report_desc[] = {
 #if enableRawIO_define == 1
 static uint8_t rawio_report_desc[] = {
 	0x06,                // Usage Page (Vendor Defined)
-	LSB(RAWIO_USAGE_PAGE), MSB(RAWIO_USAGE_PAGE),
-	0x0A,                // Usage (Mouse)
-	LSB(RAWIO_USAGE), MSB(RAWIO_USAGE),
+		LSB(RAWIO_USAGE_PAGE), MSB(RAWIO_USAGE_PAGE),
+	0x0A,                // Usage
+		LSB(RAWIO_USAGE), MSB(RAWIO_USAGE),
 	0xA1, 0x01,          // Collection (Application)
 	0x75, 0x08,          //   Report Size (8)
 	0x15, 0x00,          //   Logical Minimum (0)
-	0x25, 0xFF,          //   Logical Maximum (255)
-
-	0x95, RAWIO_TX_SIZE, //     Report Count
-	0x09, 0x01,          //     Usage (Input)
-	0x81, 0x02,          //     Input (Data,Var,Abs)
+	0x26, 0xFF, 0x00,    //   Logical Maximum (255)
 
 	0x95, RAWIO_RX_SIZE, //     Report Count
-	0x09, 0x02,          //     Usage (Output)
+	0x09, 0x01,          //     Usage (Output)
 	0x91, 0x02,          //     Output (Data,Var,Abs)
 
-	0xC0,                // End Collection - Consumer Control
+	0x95, RAWIO_TX_SIZE, //     Report Count
+	0x09, 0x02,          //     Usage (Input)
+	0x81, 0x02,          //     Input (Data,Var,Abs)
+
+	0xC0,                // End Collection
 };
 #endif
 
@@ -339,127 +333,73 @@ static uint8_t mouse_report_desc[] = {
 	0x05, 0x01,        // Usage Page (Generic Desktop)
 	0x09, 0x02,        // Usage (Mouse)
 	0xA1, 0x01,        // Collection (Application)
-	0x09, 0x02,        //   Usage (Mouse)
-	0xA1, 0x02,        //   Collection (Logical)
-	0x09, 0x01,        //     Usage (Pointer)
+	0x09, 0x01,        //   Usage (Pointer)
+	0xA1, 0x00,        //   Collection (Physical)
 
 	// Buttons (16 bits)
-	0xA1, 0x00,        //     Collection (Physical) - Buttons
-	0x05, 0x09,        //       Usage Page (Button)
-	0x19, 0x01,        //       Usage Minimum (Button 1)
-	0x29, 0x10,        //       Usage Maximum (Button 16)
-	0x15, 0x00,        //       Logical Minimum (0)
-	0x25, 0x01,        //       Logical Maximum (1)
-	0x75, 0x01,        //       Report Size (1)
-	0x95, 0x10,        //       Report Count (16)
-	0x81, 0x02,        //       Input (Data,Var,Abs)
+	0x05, 0x09,        //     Usage Page (Button)
+	0x19, 0x01,        //     Usage Minimum (Button 1)
+	0x29, 0x10,        //     Usage Maximum (Button 16)
+	0x15, 0x00,        //     Logical Minimum (0)
+	0x25, 0x01,        //     Logical Maximum (1)
+	0x75, 0x01,        //     Report Size (1)
+	0x95, 0x10,        //     Report Count (16)
+	0x81, 0x02,        //     Input (Data,Var,Abs)
 
 	// Pointer (32 bits)
-	0x05, 0x01,        //       Usage PAGE (Generic Desktop)
-	0x09, 0x30,        //       Usage (X)
-	0x09, 0x31,        //       Usage (Y)
-	0x16, 0x01, 0x80,  //       Logical Minimum (-32 767)
-	0x26, 0xFF, 0x7F,  //       Logical Maximum (32 767)
-	0x75, 0x10,        //       Report Size (16)
-	0x95, 0x02,        //       Report Count (2)
-	0x81, 0x06,        //       Input (Data,Var,Rel)
+	0x05, 0x01,        //     Usage PAGE (Generic Desktop)
+	0x09, 0x30,        //     Usage (X)
+	0x09, 0x31,        //     Usage (Y)
+	0x16, 0x01, 0x80,  //     Logical Minimum (-32 767)
+	0x26, 0xFF, 0x7F,  //     Logical Maximum (32 767)
+	0x75, 0x10,        //     Report Size (16)
+	0x95, 0x02,        //     Report Count (2)
+	0x81, 0x06,        //     Input (Data,Var,Rel)
 
-	/*
 	// Vertical Wheel
 	// - Multiplier (2 bits)
-	0xa1, 0x02,        //       Collection (Logical)
-	0x09, 0x48,        //         Usage (Resolution Multiplier)
-	0x15, 0x00,        //         Logical Minimum (0)
-	0x25, 0x01,        //         Logical Maximum (1)
-	0x35, 0x01,        //         Physical Minimum (1)
-	0x45, 0x04,        //         Physical Maximum (4)
-	0x75, 0x02,        //         Report Size (2)
-	0x95, 0x01,        //         Report Count (1)
-	0xa4,              //         Push
-	0xb1, 0x02,        //         Feature (Data,Var,Abs)
+	0xA1, 0x02,        //     Collection (Logical)
+	0x09, 0x48,        //       Usage (Resolution Multiplier)
+	0x15, 0x00,        //       Logical Minimum (0)
+	0x25, 0x01,        //       Logical Maximum (1)
+	0x35, 0x01,        //       Physical Minimum (1)
+	0x45, 0x04,        //       Physical Maximum (4)
+	0x75, 0x02,        //       Report Size (2)
+	0x95, 0x01,        //       Report Count (1)
+	0xA4,              //       Push
+	0xB1, 0x02,        //       Feature (Data,Var,Abs)
 	// - Device (8 bits)
-	0x09, 0x38,        //         Usage (Wheel)
-	0x15, 0x81,        //         Logical Minimum (-127)
-	0x25, 0x7f,        //         Logical Maximum (127)
-	0x35, 0x00,        //         Physical Minimum (0)        - reset physical
-	0x45, 0x00,        //         Physical Maximum (0)
-	0x75, 0x08,        //         Report Size (8)
-	0x81, 0x06,        //         Input (Data,Var,Rel)
-	0xc0,              //       End Collection - Vertical Wheel
+	0x09, 0x38,        //       Usage (Wheel)
+	0x15, 0x81,        //       Logical Minimum (-127)
+	0x25, 0x7F,        //       Logical Maximum (127)
+	0x35, 0x00,        //       Physical Minimum (0)        - reset physical
+	0x45, 0x00,        //       Physical Maximum (0)
+	0x75, 0x08,        //       Report Size (8)
+	0x81, 0x06,        //       Input (Data,Var,Rel)
+	0xC0,              //     End Collection - Vertical Wheel
 
 	// Horizontal Wheel
 	// - Multiplier (2 bits)
-	0xa1, 0x02,        //       Collection (Logical)
-	0x09, 0x48,        //         Usage (Resolution Multiplier)
-	0xb4,              //         Pop
-	0xb1, 0x02,        //         Feature (Data,Var,Abs)
+	0xA1, 0x02,        //     Collection (Logical)
+	0x09, 0x48,        //       Usage (Resolution Multiplier)
+	0xB4,              //       Pop
+	0xB1, 0x02,        //       Feature (Data,Var,Abs)
 	// - Padding (4 bits)
-	0x35, 0x00,        //         Physical Minimum (0)        - reset physical
-	0x45, 0x00,        //         Physical Maximum (0)
-	0x75, 0x04,        //         Report Size (4)
-	0xb1, 0x03,        //         Feature (Cnst,Var,Abs)
+	0x35, 0x00,        //       Physical Minimum (0)        - reset physical
+	0x45, 0x00,        //       Physical Maximum (0)
+	0x75, 0x04,        //       Report Size (4)
+	0xB1, 0x03,        //       Feature (Cnst,Var,Abs)
 	// - Device (8 bits)
-	0x05, 0x0c,        //         Usage Page (Consumer Devices)
-	0x0a, 0x38, 0x02,  //         Usage (AC Pan)
-	0x15, 0x81,        //         Logical Minimum (-127)
-	0x25, 0x7f,        //         Logical Maximum (127)
-	0x75, 0x08,        //         Report Size (8)
-	0x81, 0x06,        //         Input (Data,Var,Rel)
-	0xc0,              //       End Collection - Horizontal Wheel
+	0x05, 0x0C,        //       Usage Page (Consumer Devices)
+	0x0A, 0x38, 0x02,  //       Usage (AC Pan)
+	0x15, 0x81,        //       Logical Minimum (-127)
+	0x25, 0x7F,        //       Logical Maximum (127)
+	0x75, 0x08,        //       Report Size (8)
+	0x81, 0x06,        //       Input (Data,Var,Rel)
+	0xC0,              //     End Collection - Horizontal Wheel
 
-	*/
-	0xc0,              //     End Collection - Buttons
-	0xc0,              //   End Collection - Mouse Logical
-	0xc0               // End Collection - Mouse Application
-};
-#endif
-
-
-// Joystick Protocol, HID 1.11 spec, Apendix D, page 64-65
-#if enableJoystick_define == 1
-static uint8_t joystick_report_desc[] = {
-	0x05, 0x01,                     // Usage Page (Generic Desktop)
-	0x09, 0x04,                     // Usage (Joystick)
-	0xA1, 0x01,                     // Collection (Application)
-	0x15, 0x00,                     // Logical Minimum (0)
-	0x25, 0x01,                     // Logical Maximum (1)
-	0x75, 0x01,                     // Report Size (1)
-	0x95, 0x20,                     // Report Count (32)
-	0x05, 0x09,                     // Usage Page (Button)
-	0x19, 0x01,                     // Usage Minimum (Button #1)
-	0x29, 0x20,                     // Usage Maximum (Button #32)
-	0x81, 0x02,                     // Input (variable,absolute)
-	0x15, 0x00,                     // Logical Minimum (0)
-	0x25, 0x07,                     // Logical Maximum (7)
-	0x35, 0x00,                     // Physical Minimum (0)
-	0x46, 0x3B, 0x01,               // Physical Maximum (315)
-	0x75, 0x04,                     // Report Size (4)
-	0x95, 0x01,                     // Report Count (1)
-	0x65, 0x14,                     // Unit (20)
-	0x05, 0x01,                     // Usage Page (Generic Desktop)
-	0x09, 0x39,                     // Usage (Hat switch)
-	0x81, 0x42,                     // Input (variable,absolute,null_state)
-	0x05, 0x01,                     // Usage Page (Generic Desktop)
-	0x09, 0x01,                     // Usage (Pointer)
-	0xA1, 0x00,                     // Collection ()
-	0x15, 0x00,                     //   Logical Minimum (0)
-	0x26, 0xFF, 0x03,               //   Logical Maximum (1023)
-	0x75, 0x0A,                     //   Report Size (10)
-	0x95, 0x04,                     //   Report Count (4)
-	0x09, 0x30,                     //   Usage (X)
-	0x09, 0x31,                     //   Usage (Y)
-	0x09, 0x32,                     //   Usage (Z)
-	0x09, 0x35,                     //   Usage (Rz)
-	0x81, 0x02,                     //   Input (variable,absolute)
-	0xC0,                           // End Collection
-	0x15, 0x00,                     // Logical Minimum (0)
-	0x26, 0xFF, 0x03,               // Logical Maximum (1023)
-	0x75, 0x0A,                     // Report Size (10)
-	0x95, 0x02,                     // Report Count (2)
-	0x09, 0x36,                     // Usage (Slider)
-	0x09, 0x36,                     // Usage (Slider)
-	0x81, 0x02,                     // Input (variable,absolute)
-	0xC0                            // End Collection
+	0xC0,              //   End Collection - Mouse Physical
+	0xC0,              // End Collection - Mouse Application
 };
 #endif
 
@@ -479,23 +419,13 @@ static uint8_t joystick_report_desc[] = {
 #define MOUSE_INTERFACES 0
 #endif
 
-#if enableJoystick_define != 1
-#undef  JOYSTICK_INTERFACES
-#define JOYSTICK_INTERFACES 0
-#endif
-
-#if enableVirtualSerialPort_define != 1
-#undef  CDC_INTERFACES
-#define CDC_INTERFACES 0
-#endif
-
 #if enableRawIO_define != 1
 #undef  RAWIO_INTERFACES
 #define RAWIO_INTERFACES 0
 #endif
 
 // Determine number of interfaces
-#define NUM_INTERFACE (KEYBOARD_INTERFACES + CDC_INTERFACES + MOUSE_INTERFACES + JOYSTICK_INTERFACES + RAWIO_INTERFACES)
+#define NUM_INTERFACE (KEYBOARD_INTERFACES + MOUSE_INTERFACES + RAWIO_INTERFACES)
 
 
 // USB Configuration Descriptor.  This huge descriptor tells all
@@ -594,7 +524,7 @@ static uint8_t config_descriptor[] = {
 	0,                                      // bAlternateSetting
 	1,                                      // bNumEndpoints
 	0x03,                                   // bInterfaceClass (0x03 = HID)
-	0x01,                                   // bInterfaceSubClass (0x00 = Non-Boot, 0x01 = Boot)
+	0x00,                                   // bInterfaceSubClass (0x00 = Non-Boot, 0x01 = Boot)
 	0x00,                                   // bInterfaceProtocol (0x00 = None)
 	SYS_CTRL_INTERFACE + 5,                 // iInterface
 // - 9 bytes -
@@ -621,98 +551,43 @@ static uint8_t config_descriptor[] = {
 
 
 //
-// --- CDC / Serial Port Endpoint Descriptors ---
+// --- Mouse Endpoint Descriptors ---
 //
-#if enableVirtualSerialPort_define == 1
-#define SERIAL_CDC_DESC_TOTAL_OFFSET (SERIAL_CDC_DESC_SIZE)
+#if enableMouse_define == 1
+#define MOUSE_DESC_TOTAL_OFFSET (MOUSE_DESC_SIZE)
 
-// --- Serial CDC --- CDC IAD Descriptor
-// - 8 bytes -
-	// interface association descriptor, USB ECN, Table 9-Z
-	8,                                      // bLength
-	11,                                     // bDescriptorType
-	CDC_STATUS_INTERFACE,                   // bFirstInterface
-	2,                                      // bInterfaceCount
-	0x02,                                   // bFunctionClass
-	0x02,                                   // bFunctionSubClass
-	0x01,                                   // bFunctionProtocol
-	0,                                      // iFunction (XXX No interface index, don't give string -HaaTa)
-
-// --- Serial CDC --- CDC Data Interface
+// --- Mouse Interface ---
 // - 9 bytes -
 	// interface descriptor, USB spec 9.6.5, page 267-269, Table 9-12
 	9,                                      // bLength
 	4,                                      // bDescriptorType
-	CDC_STATUS_INTERFACE,                   // bInterfaceNumber
+	MOUSE_INTERFACE,                        // bInterfaceNumber
 	0,                                      // bAlternateSetting
 	1,                                      // bNumEndpoints
-	0x02,                                   // bInterfaceClass
-	0x02,                                   // bInterfaceSubClass
-	0x01,                                   // bInterfaceProtocol
-	CDC_STATUS_INTERFACE + 5,               // iInterface
-// - 5 bytes -
-	// CDC Header Functional Descriptor, CDC Spec 5.2.3.1, Table 26
-	5,                                      // bFunctionLength
-	0x24,                                   // bDescriptorType
-	0x00,                                   // bDescriptorSubtype
-	0x10, 0x01,                             // bcdCDC
-// - 5 bytes -
-	// Call Management Functional Descriptor, CDC Spec 5.2.3.2, Table 27
-	5,                                      // bFunctionLength
-	0x24,                                   // bDescriptorType
-	0x01,                                   // bDescriptorSubtype
-	0x01,                                   // bmCapabilities
-	CDC_DATA_INTERFACE,                     // bDataInterface
-// - 4 bytes -
-	// Abstract Control Management Functional Descriptor, CDC Spec 5.2.3.3, Table 28
-	4,                                      // bFunctionLength
-	0x24,                                   // bDescriptorType
-	0x02,                                   // bDescriptorSubtype
-	0x06,                                   // bmCapabilities
-// - 5 bytes -
-	// Union Functional Descriptor, CDC Spec 5.2.3.8, Table 33
-	5,                                      // bFunctionLength
-	0x24,                                   // bDescriptorType
-	0x06,                                   // bDescriptorSubtype
-	CDC_STATUS_INTERFACE,                   // bMasterInterface
-	CDC_DATA_INTERFACE,                     // bSlaveInterface0
-// - 7 bytes -
-	// endpoint descriptor, USB spec 9.6.6, page 269-271, Table 9-13
-	7,                                      // bLength
-	5,                                      // bDescriptorType
-	CDC_ACM_ENDPOINT | 0x80,                // bEndpointAddress
-	0x03,                                   // bmAttributes (0x03=intr)
-	CDC_ACM_SIZE, 0,                        // wMaxPacketSize
-	64,                                     // bInterval
+	0x03,                                   // bInterfaceClass (0x03 = HID)
+	0x00,                                   // bInterfaceSubClass (0x01 = Boot)
+	0x02,                                   // bInterfaceProtocol (0x02 = Mouse)
+	MOUSE_INTERFACE + 5,                    // iInterface
 // - 9 bytes -
-	// interface descriptor, USB spec 9.6.5, page 267-269, Table 9-12
+	// HID interface descriptor, HID 1.11 spec, section 6.2.1
 	9,                                      // bLength
-	4,                                      // bDescriptorType
-	CDC_DATA_INTERFACE,                     // bInterfaceNumber
-	0,                                      // bAlternateSetting
-	2,                                      // bNumEndpoints
-	0x0A,                                   // bInterfaceClass
-	0x00,                                   // bInterfaceSubClass
-	0x00,                                   // bInterfaceProtocol
-	CDC_DATA_INTERFACE + 5,                 // iInterface
+	0x21,                                   // bDescriptorType
+	0x11, 0x01,                             // bcdHID
+	0,                                      // bCountryCode
+	1,                                      // bNumDescriptors
+	0x22,                                   // bDescriptorType
+	LSB(sizeof(mouse_report_desc)),         // wDescriptorLength
+	MSB(sizeof(mouse_report_desc)),
 // - 7 bytes -
 	// endpoint descriptor, USB spec 9.6.6, page 269-271, Table 9-13
 	7,                                      // bLength
 	5,                                      // bDescriptorType
-	CDC_RX_ENDPOINT,                        // bEndpointAddress
-	0x02,                                   // bmAttributes (0x02=bulk)
-	CDC_RX_SIZE, 0,                         // wMaxPacketSize
-	0,                                      // bInterval
-// - 7 bytes -
-	// endpoint descriptor, USB spec 9.6.6, page 269-271, Table 9-13
-	7,                                      // bLength
-	5,                                      // bDescriptorType
-	CDC_TX_ENDPOINT | 0x80,                 // bEndpointAddress
-	0x02,                                   // bmAttributes (0x02=bulk)
-	CDC_TX_SIZE, 0,                         // wMaxPacketSize
-	0,                                      // bInterval
+	MOUSE_ENDPOINT | 0x80,                  // bEndpointAddress
+	0x03,                                   // bmAttributes (0x03=intr)
+	MOUSE_SIZE, 0,                          // wMaxPacketSize
+	MOUSE_INTERVAL,                         // bInterval
 #else
-#define SERIAL_CDC_DESC_TOTAL_OFFSET (0)
+#define MOUSE_DESC_TOTAL_OFFSET (0)
 #endif
 
 
@@ -767,88 +642,6 @@ static uint8_t config_descriptor[] = {
 #define RAWIO_DESC_TOTAL_OFFSET (0)
 #endif
 
-
-//
-// --- Mouse Endpoint Descriptors ---
-//
-#if enableMouse_define == 1
-#define MOUSE_DESC_TOTAL_OFFSET (MOUSE_DESC_SIZE)
-
-// --- Mouse Interface ---
-// - 9 bytes -
-	// interface descriptor, USB spec 9.6.5, page 267-269, Table 9-12
-	9,                                      // bLength
-	4,                                      // bDescriptorType
-	MOUSE_INTERFACE,                        // bInterfaceNumber
-	0,                                      // bAlternateSetting
-	1,                                      // bNumEndpoints
-	0x03,                                   // bInterfaceClass (0x03 = HID)
-	0x00,                                   // bInterfaceSubClass (0x01 = Boot)
-	0x02,                                   // bInterfaceProtocol (0x02 = Mouse)
-	MOUSE_INTERFACE + 5,                    // iInterface
-// - 9 bytes -
-	// HID interface descriptor, HID 1.11 spec, section 6.2.1
-	9,                                      // bLength
-	0x21,                                   // bDescriptorType
-	0x11, 0x01,                             // bcdHID
-	0,                                      // bCountryCode
-	1,                                      // bNumDescriptors
-	0x22,                                   // bDescriptorType
-	LSB(sizeof(mouse_report_desc)),         // wDescriptorLength
-	MSB(sizeof(mouse_report_desc)),
-// - 7 bytes -
-	// endpoint descriptor, USB spec 9.6.6, page 269-271, Table 9-13
-	7,                                      // bLength
-	5,                                      // bDescriptorType
-	MOUSE_ENDPOINT | 0x80,                  // bEndpointAddress
-	0x03,                                   // bmAttributes (0x03=intr)
-	MOUSE_SIZE, 0,                          // wMaxPacketSize
-	MOUSE_INTERVAL,                         // bInterval
-#else
-#define MOUSE_DESC_TOTAL_OFFSET (0)
-#endif
-
-
-//
-// --- Joystick Endpoint Descriptors ---
-//
-#if enableJoystick_define == 1
-#define JOYSTICK_DESC_TOTAL_OFFSET (JOYSTICK_DESC_SIZE)
-
-// --- Joystick Interface ---
-// - 9 bytes -
-	// interface descriptor, USB spec 9.6.5, page 267-269, Table 9-12
-	9,                                      // bLength
-	4,                                      // bDescriptorType
-	JOYSTICK_INTERFACE,                     // bInterfaceNumber
-	0,                                      // bAlternateSetting
-	1,                                      // bNumEndpoints
-	0x03,                                   // bInterfaceClass (0x03 = HID)
-	0x00,                                   // bInterfaceSubClass
-	0x00,                                   // bInterfaceProtocol
-	JOYSTICK_INTERFACE + 5,                 // iInterface
-// - 9 bytes -
-	// HID interface descriptor, HID 1.11 spec, section 6.2.1
-	9,                                      // bLength
-	0x21,                                   // bDescriptorType
-	0x11, 0x01,                             // bcdHID
-	0,                                      // bCountryCode
-	1,                                      // bNumDescriptors
-	0x22,                                   // bDescriptorType
-	LSB(sizeof(joystick_report_desc)),      // wDescriptorLength
-	MSB(sizeof(joystick_report_desc)),
-// - 7 bytes -
-	// endpoint descriptor, USB spec 9.6.6, page 269-271, Table 9-13
-	7,                                      // bLength
-	5,                                      // bDescriptorType
-	JOYSTICK_ENDPOINT | 0x80,               // bEndpointAddress
-	0x03,                                   // bmAttributes (0x03=intr)
-	JOYSTICK_SIZE, 0,                       // wMaxPacketSize
-	JOYSTICK_INTERVAL,                      // bInterval
-#else
-#define JOYSTICK_DESC_TOTAL_OFFSET (0)
-#endif
-
 };
 
 uint8_t *usb_bMaxPower = &config_descriptor[8];
@@ -892,21 +685,12 @@ usb_string_descriptor( usb_string_nkro_keyboard_name, NKRO_KEYBOARD_NAME );
 usb_string_descriptor( usb_string_sys_ctrl_name, SYS_CTRL_NAME );
 #endif
 
-#if enableVirtualSerialPort_define == 1
-usb_string_descriptor( usb_string_cdc_status_name, CDC_STATUS_NAME );
-usb_string_descriptor( usb_string_cdc_data_name, CDC_DATA_NAME );
-#endif
-
 #if enableRawIO_define == 1
 usb_string_descriptor( usb_string_rawio_name, RAWIO_NAME );
 #endif
 
 #if enableMouse_define == 1
 usb_string_descriptor( usb_string_mouse_name, MOUSE_NAME );
-#endif
-
-#if enableJoystick_define == 1
-usb_string_descriptor( usb_string_joystick_name, JOYSTICK_NAME );
 #endif
 
 
@@ -950,11 +734,6 @@ const usb_descriptor_list_t usb_descriptor_list[] = {
 	iInterfaceString( SYS_CTRL_INTERFACE, usb_string_sys_ctrl_name ),
 #endif
 
-#if enableVirtualSerialPort_define == 1
-	iInterfaceString( CDC_STATUS_INTERFACE, usb_string_cdc_status_name ),
-	iInterfaceString( CDC_DATA_INTERFACE, usb_string_cdc_data_name ),
-#endif
-
 #if enableRawIO_define == 1
 	{0x2200, RAWIO_INTERFACE, rawio_report_desc, sizeof(rawio_report_desc)},
 	{0x2100, RAWIO_INTERFACE, config_descriptor + RAWIO_DESC_BASE_OFFSET, 9},
@@ -965,12 +744,6 @@ const usb_descriptor_list_t usb_descriptor_list[] = {
 	{0x2200, MOUSE_INTERFACE, mouse_report_desc, sizeof(mouse_report_desc)},
 	{0x2100, MOUSE_INTERFACE, config_descriptor + MOUSE_DESC_BASE_OFFSET, 9},
 	iInterfaceString( MOUSE_INTERFACE, usb_string_mouse_name ),
-#endif
-
-#if enableJoystick_define == 1
-	{0x2200, JOYSTICK_INTERFACE, joystick_report_desc, sizeof(joystick_report_desc)},
-	{0x2100, JOYSTICK_INTERFACE, config_descriptor + JOYSTICK_DESC_BASE_OFFSET, 9},
-	iInterfaceString( JOYSTICK_INTERFACE, usb_string_joystick_name ),
 #endif
 
 	{0, 0, NULL, 0}
@@ -1072,4 +845,85 @@ const uint8_t usb_endpoint_config_table[NUM_ENDPOINTS] =
 #endif
 };
 
+#if defined(_sam_)
+/**
+ * \name UDC structures which contains all USB Device definitions
+ */
+//@{
+//
 
+bool udi_hid_enable(void) { return true; }
+void udi_hid_disable(void) { }
+bool my_udi_hid_setup(void) { usb_setup(); return true; }
+uint8_t udi_hid_getsetting(void) { return 0; }
+void udi_hid_sof(void) {
+	// SOF tokens are used for keepalive, consider the system awake when we're receiving them
+	/*if ( usb_dev_sleep )
+	{
+		Output_update_usb_current( *usb_bMaxPower * 2 );
+		usb_dev_sleep = 0;
+	}*/
+}
+
+//! Global structure which contains standard UDI interface for UDC
+udi_api_t udi_api_hid = {
+        .enable = (bool(*)(void))udi_hid_enable,
+        .disable = (void (*)(void))udi_hid_disable,
+        .setup = (bool(*)(void))my_udi_hid_setup,
+        .getsetting = (uint8_t(*)(void))udi_hid_getsetting,
+        .sof_notify = (void(*)(void))udi_hid_sof,
+};
+
+udi_api_t udi_api_rawhid = {
+        .enable = (bool(*)(void))udi_hid_generic_enable,
+        .disable = (void (*)(void))udi_hid_generic_disable,
+        .setup = (bool(*)(void))my_udi_hid_setup,
+        .getsetting = (uint8_t(*)(void))udi_hid_getsetting,
+        .sof_notify = (void(*)(void))udi_hid_sof,
+};
+
+//! Associate an UDI for each USB interface
+udi_api_t* udi_apis[] = {
+#if enableKeyboard_define == 1
+	&udi_api_hid,
+	&udi_api_hid,
+	&udi_api_hid,
+#endif
+#if enableMouse_define == 1
+	&udi_api_hid,
+#endif
+#if enableRawIO_define == 1
+	&udi_api_rawhid,
+#endif
+};
+#define __STR(a) #a
+#define CTASSERT(x)             _Static_assert(x, __STR(x))
+#define CTASSERT_SIZE_BYTE(t, s)     CTASSERT(sizeof(t) == (s))
+CTASSERT_SIZE_BYTE(udi_apis, sizeof(udi_api_t*)*NUM_INTERFACE);
+
+//! Add UDI with USB Descriptors FS & HS
+udc_config_speed_t   udc_config_fshs[1] = {{
+	.desc          = (usb_conf_desc_t*)config_descriptor,
+	.udi_apis      = udi_apis,
+}};
+
+COMPILER_WORD_ALIGNED
+usb_dev_debug_desc_t udc_device_debug = {
+	.bLength = 1,
+};
+
+//! Needed to fix lsusb "Resource temporarily unavailable"
+COMPILER_WORD_ALIGNED
+UDC_DESC_STORAGE usb_dev_qual_desc_t udc_device_qual = {
+        .bLength = 1,
+};
+
+//! Add all information about USB Device in global structure for UDC
+udc_config_t udc_config = {
+	.confdev_lsfs = (usb_dev_desc_t*)device_descriptor,
+	.conf_lsfs = udc_config_fshs,
+	.qualifier = &udc_device_qual,
+	.debug = &udc_device_debug,
+};
+
+#endif

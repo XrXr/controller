@@ -1,16 +1,16 @@
-/* Copyright (C) 2017 by Jacob Alexander
+/* Copyright (C) 2017-2020 by Jacob Alexander
  *
  * This file is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
+ * it under the terms of the GNU Lesser General Public License as published by
  * the Free Software Foundation, either version 3 of the License, or
  * (at your option) any later version.
  *
  * This file is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+ * GNU Lesser General Public License for more details.
  *
- * You should have received a copy of the GNU General Public License
+ * You should have received a copy of the GNU Lesser General Public License
  * along with this file.  If not, see <http://www.gnu.org/licenses/>.
  */
 
@@ -53,32 +53,32 @@ typedef enum HIDIO_Return {
 // ----- Structs -----
 
 typedef struct HIDIO_Packet {
-	HIDIO_Packet_Type type:3;
-	uint8_t           cont:1;      // 0 - Only packet, 1 continued packet following
-	uint8_t           id_width:1;  // 0 - 16bits, 1 - 32bits
-	uint8_t           reserved:1;  // Reserved
 	uint8_t           upper_len:2; // Upper 2 bits of length field (generally unused)
+	uint8_t           reserved:1;  // Reserved
+	uint8_t           id_width:1;  // 0 - 16bits, 1 - 32bits
+	uint8_t           cont:1;      // 0 - Only packet, 1 continued packet following
+	HIDIO_Packet_Type type:3;
 	uint8_t           len;         // Lower 8 bits of length field
 	uint8_t           data[0];     // Start of data payload (may start with Id)
 } __attribute((packed)) HIDIO_Packet;
 
 typedef struct HIDIO_Packet16 {
-	HIDIO_Packet_Type type:3;
-	uint8_t           cont:1;      // 0 - Only packet, 1 continued packet following
-	uint8_t           id_width:1;  // 0 - 16bits, 1 - 32bits
-	uint8_t           reserved:1;  // Reserved
 	uint8_t           upper_len:2; // Upper 2 bits of length field (generally unused)
+	uint8_t           reserved:1;  // Reserved
+	uint8_t           id_width:1;  // 0 - 16bits, 1 - 32bits
+	uint8_t           cont:1;      // 0 - Only packet, 1 continued packet following
+	HIDIO_Packet_Type type:3;
 	uint8_t           len;         // Lower 8 bits of length field
 	uint16_t          id;          // Id field (check id_width to see which struct to use)
 	uint8_t           data[0];     // Start of data payload
 } __attribute((packed)) HIDIO_Packet16;
 
 typedef struct HIDIO_Packet32 {
-	HIDIO_Packet_Type type:3;
-	uint8_t           cont:1;      // 0 - Only packet, 1 continued packet following
-	uint8_t           id_width:1;  // 0 - 16bits, 1 - 32bits
-	uint8_t           reserved:1;  // Reserved
 	uint8_t           upper_len:2; // Upper 2 bits of length field (generally unused)
+	uint8_t           reserved:1;  // Reserved
+	uint8_t           id_width:1;  // 0 - 16bits, 1 - 32bits
+	uint8_t           cont:1;      // 0 - Only packet, 1 continued packet following
+	HIDIO_Packet_Type type:3;
 	uint8_t           len;         // Lower 8 bits of length field
 	uint32_t          id;          // Id field (check id_width to see which struct to use)
 	uint8_t           data[0];     // Start of data payload
@@ -106,9 +106,30 @@ typedef struct HIDIO_Buffer_Entry {
 
 // ----- Variables -----
 
+extern uint8_t HIDIO_VT_Connected;
+
+
+
 // ----- Functions -----
 
 void HIDIO_setup();
 void HIDIO_process();
 void HIDIO_packet_interrupt( uint8_t* buf );
 
+#if defined(_sam4s_)
+void HIDIO_rawio_rx_callback(uint8_t *report);
+uint8_t HIDIO_rawio_enable();
+void HIDIO_rawio_disable();
+#endif
+
+#define HIDIO_PRINT_BUFFER_NONE  0 // Flush each print
+#define HIDIO_PRINT_BUFFER_LINE  1 // Flush each line
+#define HIDIO_PRINT_BUFFER_CHUNK 2 // Flush every X bytes
+#define HIDIO_PRINT_BUFFER_BULK  3 // Flush manually when done
+
+//int Output_getchar();
+void HIDIO_print_mode( uint8_t mode );
+void HIDIO_print_flush();
+int HIDIO_putchar( char c );
+int HIDIO_putstr( char* str, uint16_t count );
+void HIDIO_flush();

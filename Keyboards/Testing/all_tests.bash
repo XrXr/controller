@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # This script runs each of the firmware build scripts
 # Input Club produced keyboard targets
-# Jacob Alexander 2017-2018
+# Jacob Alexander 2017-2020
 
 
 
@@ -27,20 +27,24 @@ source "../common.bash"
 ###########
 
 # Run builds
-cmd ./macrotest.bash
-cmd ./klltest.bash
-cmd ./mk20test.bash
-cmd ./mk22test.bash
-cmd ./mk64test.bash
-cmd ./mk66test.bash
-cmd ./none.bash
-cmd ./nrf52832.bash
-cmd ./rttout.bash
-cmd ./sam4sd32c.bash
-cmd ./template.bash
-cmd ./uartout.bash
-cmd ./usbxrtt.bash
-cmd ./usbxuart.bash
+cmd "bash ./macrotest.bash"
+cmd "bash ./klltest.bash"
+cmd "bash ./mk20test.bash"
+cmd "bash ./mk22test.bash"
+cmd "bash ./mk64test.bash"
+cmd "bash ./mk66test.bash"
+cmd "bash ./none.bash"
+cmd "bash ./rttout.bash"
+cmd "bash ./sam4s2a.bash"
+cmd "bash ./sam4s4a.bash"
+cmd "bash ./sam4s4b.bash"
+cmd "bash ./sam4s8b.bash"
+cmd "bash ./sam4s8c.bash"
+cmd "bash ./sam4sd32c.bash"
+cmd "bash ./template.bash"
+cmd "bash ./uartout.bash"
+cmd "bash ./usbxrtt.bash"
+cmd "bash ./usbxuart.bash"
 
 # Tally results
 result

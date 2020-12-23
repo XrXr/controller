@@ -1,5 +1,5 @@
 /* Copyright (c) 2011,2012 Simon Schubert <2@0x2c.org>.
- * Modifications by Jacob Alexander 2014-2017 <haata@kiibohd.com>
+ * Modifications by Jacob Alexander 2014-2020 <haata@kiibohd.com>
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -27,7 +27,6 @@
 #include <stdint.h>
 
 
-
 // ----- Defines -----
 
 #define USB_FUNCTION_DFU_IFACE_COUNT 1
@@ -46,6 +45,10 @@
 // Sector size is double the program flash size
 #elif defined(_mk22fx512avlh12_)
 #define USB_DFU_TRANSFER_SIZE FLASH_SECTOR_SIZE / 2
+
+// 16 pages is the smallest erase for 48/64k areas, Section 8.1.3.1
+#elif defined(_sam4s_)
+#define USB_DFU_TRANSFER_SIZE (8*FLASH_PAGE_SIZE) //4096
 
 #endif
 #endif
@@ -134,9 +137,9 @@ struct dfu_status_t {
 CTASSERT_SIZE_BYTE(struct dfu_status_t, 6);
 
 
-typedef enum dfu_status (*dfu_setup_read_t)(size_t off, size_t *len, void **buf);
-typedef enum dfu_status (*dfu_setup_write_t)(size_t off, size_t len, void **buf);
-typedef enum dfu_status (*dfu_finish_write_t)(void *, size_t off, size_t len);
+typedef enum dfu_status (*dfu_setup_read_t)(size_t off, size_t *len, void **buf, uint8_t bAlternateSetting);
+typedef enum dfu_status (*dfu_setup_write_t)(size_t off, size_t len, void **buf, uint8_t bAlternateSetting);
+typedef enum dfu_status (*dfu_finish_write_t)(void *, size_t off, size_t len, uint8_t bAlternateSetting);
 typedef void (*dfu_detach_t)(void);
 
 struct dfu_ctx {
@@ -187,4 +190,4 @@ extern const struct usbd_function dfu_app_function;
 void dfu_write_done( enum dfu_status, struct dfu_ctx *ctx );
 void dfu_init( dfu_setup_read_t setup_read, dfu_setup_write_t setup_write, dfu_finish_write_t finish_write, struct dfu_ctx *ctx );
 void dfu_app_init( dfu_detach_t detachcb );
-
+int dfu_handle_control( struct usb_ctrl_req_t *req, void *data );

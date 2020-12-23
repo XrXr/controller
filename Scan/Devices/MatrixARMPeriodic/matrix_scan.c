@@ -1,4 +1,4 @@
-/* Copyright (C) 2014-2017 by Jacob Alexander
+/* Copyright (C) 2014-2020 by Jacob Alexander
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -27,22 +27,45 @@
 // Project Includes
 #include <cli.h>
 #include <kll_defs.h>
+#include <kll.h>
 #include <latency.h>
 #include <led.h>
 #include <print.h>
 #include <macro.h>
 #include <Lib/delay.h>
+#include <Lib/gpio.h>
 #include <Lib/periodic.h>
+#include <Lib/time.h>
+
+#if enableRawIO_define == 1
+#include <hidio_com.h>
+#endif
 
 // Local Includes
 #include "matrix_scan.h"
 
-// Matrix Configuration
-#include <matrix.h>
-
 
 
 // ----- Defines -----
+
+#define TickStore_MaxTicks 255
+
+
+
+// ----- Matrix Definition -----
+// Scan Type
+const GPIO_Config Matrix_type = ScanCodeMatrixType_define;
+
+// Matrix
+const GPIO_Pin Matrix_cols[] = { ScanCodeStrobeList_define };
+const GPIO_Pin Matrix_rows[] = { ScanCodeSenseList_define };
+
+// Convenience Macros
+#define Matrix_colsNum sizeof( Matrix_cols ) / sizeof( GPIO_Pin )
+#define Matrix_rowsNum sizeof( Matrix_rows ) / sizeof( GPIO_Pin )
+#define Matrix_maxKeys sizeof( Matrix_scanArray ) / sizeof( KeyState )
+
+
 
 // ----- Function Declarations -----
 
@@ -77,6 +100,12 @@ CLIDict_Def( matrixCLIDict, "Matrix Module Commands" ) = {
 static volatile KeyState Matrix_scanArray[ Matrix_colsNum * Matrix_rowsNum ];
 
 
+#if ScanCodeRemapping_define == 1
+// ScanCode Remapping Array
+static const uint16_t matrixScanCodeRemappingMatrix[] = { ScanCodeRemappingMatrix_define };
+#endif
+
+
 // Matrix debug flag - If set to 1, for each keypress the scan code is displayed in hex
 //                     If set to 2, for each key state change, the scan code is displayed along with the state
 //                     If set to 3, for each scan, update a state table
@@ -100,93 +129,21 @@ static volatile uint8_t debounceExpiryTime;
 // Strobe delay setting
 static volatile uint8_t strobeDelayTime;
 
+// Activity/Inactivity Tick Stores
+static TickStore activity_tickstore;
+static TickStore inactivity_tickstore;
+static Time activity_tick_duration;
+
+// Activity counter - Keeps track of state changes (used to determine Activity/Inactivity)
+// Press count is for inactivity reset
+// Release count is for activity reset
+static volatile uint16_t matrixStateActiveCount;
+static volatile uint16_t matrixStatePressCount;
+static volatile uint16_t matrixStateReleaseCount;
+
 
 
 // ----- Functions -----
-
-// Pin action (Strobe, Sense, Strobe Setup, Sense Setup)
-uint8_t Matrix_pin( GPIO_Pin gpio, Type type )
-{
-#if defined(_kinetis_)
-	// NOTE: This function is highly dependent upon the organization of the register map
-	//       Only guaranteed to work with Freescale Kinetis MCUs
-	// Register width is defined as size of a pointer
-	unsigned int gpio_offset = gpio.port * 0x40   / sizeof(unsigned int*);
-	unsigned int port_offset = gpio.port * 0x1000 / sizeof(unsigned int*) + gpio.pin;
-
-	// Assumes 0x40 between GPIO Port registers and 0x1000 between PORT pin registers
-	// See Lib/kinetis.h
-	volatile unsigned int *GPIO_PDDR = (unsigned int*)(&GPIOA_PDDR) + gpio_offset;
-	volatile unsigned int *GPIO_PSOR = (unsigned int*)(&GPIOA_PSOR) + gpio_offset;
-	volatile unsigned int *GPIO_PCOR = (unsigned int*)(&GPIOA_PCOR) + gpio_offset;
-	volatile unsigned int *GPIO_PDIR = (unsigned int*)(&GPIOA_PDIR) + gpio_offset;
-	volatile unsigned int *PORT_PCR  = (unsigned int*)(&PORTA_PCR0) + port_offset;
-
-	// Operation depends on Type
-	switch ( type )
-	{
-	case Type_StrobeOn:
-		*GPIO_PSOR |= (1 << gpio.pin);
-		break;
-
-	case Type_StrobeOff:
-		*GPIO_PCOR |= (1 << gpio.pin);
-		break;
-
-	case Type_StrobeSetup:
-		// Set as output pin
-		*GPIO_PDDR |= (1 << gpio.pin);
-
-		// Configure pin with slow slew, high drive strength and GPIO mux
-		*PORT_PCR = PORT_PCR_SRE | PORT_PCR_DSE | PORT_PCR_MUX(1);
-
-		// Enabling open-drain if specified
-		switch ( Matrix_type )
-		{
-		case Config_Opendrain:
-			*PORT_PCR |= PORT_PCR_ODE;
-			break;
-
-		// Do nothing otherwise
-		default:
-			break;
-		}
-		break;
-
-	case Type_Sense:
-		return *GPIO_PDIR & (1 << gpio.pin) ? 1 : 0;
-
-	case Type_SenseSetup:
-		// Set as input pin
-		*GPIO_PDDR &= ~(1 << gpio.pin);
-
-		// Configure pin with passive filter and GPIO mux
-		*PORT_PCR = PORT_PCR_PFE | PORT_PCR_MUX(1);
-
-		// Pull resistor config
-		switch ( Matrix_type )
-		{
-		case Config_Pullup:
-			*PORT_PCR |= PORT_PCR_PE | PORT_PCR_PS;
-			break;
-
-		case Config_Pulldown:
-			*PORT_PCR |= PORT_PCR_PE;
-			break;
-
-		// Do nothing otherwise
-		default:
-			break;
-		}
-		break;
-	}
-#elif defined(_sam_)
-	//SAM TODO
-#endif
-
-	return 0;
-}
-
 
 // Setup GPIO pins for matrix scanning
 void Matrix_setup()
@@ -194,16 +151,37 @@ void Matrix_setup()
 	// Register Matrix CLI dictionary
 	CLI_registerDictionary( matrixCLIDict, matrixCLIDictName );
 
+#if defined(_sam_)
+	// 31.5.8 Reading the I/O line levels requires the clock of the PIO Controller to be enabled
+	PMC->PMC_PCER0 = (1 << ID_PIOA) | (1 << ID_PIOB);
+#endif
+
 	// Setup Strobe Pins
-	for ( uint8_t pin = 0; pin < Matrix_colsNum; pin++ )
+	for ( uint8_t c = 0; c < Matrix_colsNum; c++ )
 	{
-		Matrix_pin( Matrix_cols[ pin ], Type_StrobeSetup );
+		GPIO_ConfigPin pin = {
+			.port = Matrix_cols[c].port,
+			.pin = Matrix_cols[c].pin,
+#if defined(_sam_)
+			.peripheral = GPIO_Peripheral_Output0,
+#endif
+		};
+		PIO_Setup(pin); // Enables GPIO controlled by system mux
+		GPIO_Ctrl(Matrix_cols[c], GPIO_Type_DriveSetup, Matrix_type);
 	}
 
 	// Setup Sense Pins
-	for ( uint8_t pin = 0; pin < Matrix_rowsNum; pin++ )
+	for ( uint8_t c = 0; c < Matrix_rowsNum; c++ )
 	{
-		Matrix_pin( Matrix_rows[ pin ], Type_SenseSetup );
+		GPIO_ConfigPin pin = {
+			.port = Matrix_rows[c].port,
+			.pin = Matrix_rows[c].pin,
+#if defined(_sam_)
+			.peripheral = GPIO_Peripheral_Input,
+#endif
+		};
+		PIO_Setup(pin); // Enables GPIO controlled by system mux
+		GPIO_Ctrl(Matrix_rows[c], GPIO_Type_ReadSetup, Matrix_type);
 	}
 
 	// Clear out Debounce Array
@@ -230,6 +208,19 @@ void Matrix_setup()
 
 	// Strobe delay setting
 	strobeDelayTime = StrobeDelay_define;
+
+	// Setup tick duration (multiples of 1 second)
+	activity_tick_duration = Time_init();
+	activity_tick_duration.ms = 1000 * ActivityTimerMultiplier_define;
+
+	// Setup Activity and Inactivity tick resources
+	Time_tick_start( &activity_tickstore, activity_tick_duration, TickStore_MaxTicks );
+	Time_tick_start( &inactivity_tickstore, activity_tick_duration, TickStore_MaxTicks );
+
+	// Clear matrixStateActiveCount for activity check
+	matrixStateActiveCount = 0;
+	matrixStatePressCount = 0;
+	matrixStateReleaseCount = 0;
 
 	// Setup latency module
 	matrixLatencyResource = Latency_add_resource("MatrixARMPeri", LatencyOption_Ticks);
@@ -278,7 +269,6 @@ inline uint8_t Matrix_totalColumns()
 // This module keeps track of the next strobe to scan
 uint8_t Matrix_single_scan()
 {
-
 	// Start latency measurement
 	Latency_start_time( matrixLatencyResource );
 
@@ -289,8 +279,22 @@ uint8_t Matrix_single_scan()
 	// Current strobe
 	uint8_t strobe = matrixCurrentStrobe;
 
+	// XXX (HaaTa)
+	// Before strobing drain each sense line
+	// This helps with faulty pull-up resistors (particularily with SAM4S)
+	for ( uint8_t sense = 0; sense < Matrix_rowsNum; sense++ )
+	{
+		GPIO_Ctrl( Matrix_rows[ sense ], GPIO_Type_DriveSetup, Matrix_type );
+#if ScanCodeMatrixInvert_define == 2 // GPIO_Config_Pulldown
+		GPIO_Ctrl( Matrix_rows[ sense ], GPIO_Type_DriveLow, Matrix_type );
+#elif ScanCodeMatrixInvert_define == 1 // GPIO_Config_Pullup
+		GPIO_Ctrl( Matrix_rows[ sense ], GPIO_Type_DriveHigh, Matrix_type );
+#endif
+		GPIO_Ctrl( Matrix_rows[ sense ], GPIO_Type_ReadSetup, Matrix_type );
+	}
+
 	// Strobe Pin
-	Matrix_pin( Matrix_cols[ strobe ], Type_StrobeOn );
+	GPIO_Ctrl( Matrix_cols[ strobe ], GPIO_Type_DriveHigh, Matrix_type );
 
 	// Used to allow the strobe signal to propagate, generally not required
 	if ( strobeDelayTime > 0 )
@@ -303,10 +307,15 @@ uint8_t Matrix_single_scan()
 	{
 		// Key position
 		uint16_t key = Matrix_colsNum * sense + strobe;
+#if ScanCodeRemapping_define == 1
+		uint16_t key_disp = matrixScanCodeRemappingMatrix[key];
+#else
 		uint16_t key_disp = key + 1; // 1-indexed for reporting purposes
+#endif
 
 		// Check bounds, before attempting to scan
-		if ( key_disp > MaxScanCode_KLL )
+		// 1-indexed as ScanCode 0 is not used
+		if ( key_disp > MaxScanCode_KLL || key_disp == 0 )
 		{
 			continue;
 		}
@@ -319,7 +328,8 @@ uint8_t Matrix_single_scan()
 		// Somewhat longer with switch bounciness
 		// The advantage of this is that the count is ongoing and never needs to be reset
 		// State still needs to be kept track of to deal with what to send to the Macro module
-		if ( Matrix_pin( Matrix_rows[ sense ], Type_Sense ) )
+		// Compared against the default state value (ScanCodeMatrixInvert_define), usually 0
+		if ( GPIO_Ctrl( Matrix_rows[ sense ], GPIO_Type_Read, Matrix_type ) != ScanCodeMatrixInvert_define )
 		{
 			// Only update if not going to wrap around
 			if ( state->activeCount < DebounceDivThreshold ) state->activeCount += 1;
@@ -360,6 +370,7 @@ uint8_t Matrix_single_scan()
 				if ( lastTransition < debounceExpiryTime )
 				{
 					state->curState = state->prevState;
+					Macro_keyState( key_disp, state->curState );
 					continue;
 				}
 
@@ -376,6 +387,7 @@ uint8_t Matrix_single_scan()
 				if ( lastTransition < debounceExpiryTime )
 				{
 					state->curState = state->prevState;
+					Macro_keyState( key_disp, state->curState );
 					continue;
 				}
 
@@ -389,7 +401,7 @@ uint8_t Matrix_single_scan()
 
 		case KeyState_Invalid:
 		default:
-			erro_msg("Matrix scan bug!! Report me! - ");
+			erro_print("Matrix scan bug!! Report me! - ");
 			printHex( state->prevState );
 			print(" Col: ");
 			printHex( strobe );
@@ -407,6 +419,25 @@ uint8_t Matrix_single_scan()
 		// Send keystate to macro module
 		Macro_keyState( key_disp, state->curState );
 
+		// Check for activity and inactivity
+		if ( state->curState != KeyState_Off )
+		{
+			matrixStateActiveCount++;
+		}
+		switch ( state->curState )
+		{
+		case KeyState_Press:
+			matrixStatePressCount++;
+			break;
+
+		case KeyState_Release:
+			matrixStateReleaseCount++;
+			break;
+
+		default:
+			break;
+		}
+
 		// Matrix Debug, only if there is a state change
 		if ( matrixDebugMode && state->curState != state->prevState )
 		{
@@ -417,6 +448,9 @@ uint8_t Matrix_single_scan()
 				print(":");
 				printHex( key_disp );
 				print(" ");
+#if enableRawIO_define == 1
+				HIDIO_print_flush();
+#endif
 			}
 			// State transition debug output
 			else if ( matrixDebugMode == 2 )
@@ -424,6 +458,9 @@ uint8_t Matrix_single_scan()
 				printInt16( key_disp );
 				Matrix_keyPositionDebug( state->curState );
 				print(" ");
+#if enableRawIO_define == 1
+				HIDIO_print_flush();
+#endif
 			}
 			else if ( matrixDebugMode == 3 )
 			{
@@ -446,7 +483,7 @@ uint8_t Matrix_single_scan()
 	}
 
 	// Unstrobe Pin
-	Matrix_pin( Matrix_cols[ strobe ], Type_StrobeOff );
+	GPIO_Ctrl( Matrix_cols[ strobe ], GPIO_Type_DriveLow, Matrix_type );
 
 	// Measure ending latency
 	Latency_end_time( matrixLatencyResource );
@@ -487,6 +524,47 @@ uint8_t Matrix_single_scan()
 	if ( ++matrixCurrentStrobe >= Matrix_colsNum )
 	{
 		matrixCurrentStrobe = 0;
+
+		// Reset activity counter on a press
+		// TODO (HaaTa) Extra 0 id signals may occur (active and inactive)
+		if ( matrixStatePressCount > 0 && matrixStateReleaseCount == 0 )
+		{
+			Time_tick_reset( &inactivity_tickstore );
+		}
+
+		// Reset inactivity counter on a release
+		if ( matrixStateReleaseCount > 0 && matrixStatePressCount == 0 )
+		{
+			Time_tick_reset( &activity_tickstore );
+		}
+
+		// Do Activity/Inactivity checking now that a full set of strobes has completed
+		if ( matrixStateActiveCount > 0 )
+		{
+			if ( activity_tickstore.fresh_store )
+			{
+				Time_tick_reset( &inactivity_tickstore );
+			}
+
+			// Activity detected
+			Macro_tick_update( &activity_tickstore, TriggerType_Active1 );
+		}
+		else
+		{
+			if ( inactivity_tickstore.fresh_store )
+			{
+				Time_tick_reset( &activity_tickstore );
+			}
+
+			// Inactivity detected
+			Macro_tick_update( &inactivity_tickstore, TriggerType_Inactive1 );
+		}
+
+		// Finally reset the state change count
+		matrixStateActiveCount = 0;
+		matrixStatePressCount = 0;
+		matrixStateReleaseCount = 0;
+
 		return 1;
 	}
 
@@ -528,7 +606,7 @@ void cliFunc_debounce( char* args )
 	}
 
 	print( NL );
-	info_msg("Debounce Timer: ");
+	info_print("Debounce Timer: ");
 	printInt8( debounceExpiryTime );
 	print("ms");
 }
@@ -536,15 +614,15 @@ void cliFunc_debounce( char* args )
 void cliFunc_matrixInfo( char* args )
 {
 	print( NL );
-	info_msg("Columns:  ");
+	info_print("Columns:  ");
 	printInt8( Matrix_colsNum );
 
 	print( NL );
-	info_msg("Rows:     ");
+	info_print("Rows:     ");
 	printInt8( Matrix_rowsNum );
 
 	print( NL );
-	info_msg("Max Keys: ");
+	info_print("Max Keys: ");
 	printInt8( Matrix_maxKeys );
 }
 
@@ -584,7 +662,7 @@ void cliFunc_matrixDebug( char* args )
 	}
 
 	print( NL );
-	info_msg("Matrix Debug Mode: ");
+	info_print("Matrix Debug Mode: ");
 	printInt8( matrixDebugMode );
 }
 
@@ -619,7 +697,7 @@ void cliFunc_strobeDelay( char* args )
 	}
 
 	print( NL );
-	info_msg("Strobe Delay: ");
+	info_print("Strobe Delay: ");
 	printInt8( strobeDelayTime );
 	print("us");
 }

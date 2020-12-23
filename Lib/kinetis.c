@@ -37,9 +37,11 @@
 #include <debug.h>
 #else
 #include <print.h>
+#include <led.h>
 #endif
 
 // Local Includes
+#include <kll_defs.h>
 #include "entropy.h"
 #include "kinetis.h"
 
@@ -56,6 +58,8 @@ extern unsigned long _ebss;
 extern unsigned long _estack;
 
 const uint8_t sys_reset_to_loader_magic[22] = "\xff\x00\x7fRESET TO LOADER\x7f\x00\xff";
+
+uintptr_t __stack_chk_guard = 0xdeadbeef;
 
 
 
@@ -83,6 +87,13 @@ void fault_isr()
 	}
 }
 
+// Stack Overflow Interrupt
+void __stack_chk_fail(void)
+{
+	print("Segfault!" NL );
+	fault_isr();
+}
+
 void unused_isr()
 {
 	fault_isr();
@@ -100,6 +111,18 @@ void systick_default_isr()
 	// Reset cycle count register
 	ARM_DEMCR |= ARM_DEMCR_TRCENA;
 	ARM_DWT_CTRL &= ~ARM_DWT_CTRL_CYCCNTENA;
+	// Check to see if SysTick is being starved by another IRQ
+	// 12 cycle IRQ latency (plus some extra)
+	if ( ARM_DWT_CYCCNT > F_CPU / 1000 + 30 )
+	{
+		/* XXX (HaaTa) The printing of this message is causing LED buffers to get clobbered (likely due to frame overflows)
+		erro_printNL("SysTick is being starved by another IRQ...");
+		printInt32( ARM_DWT_CYCCNT );
+		print(" vs. ");
+		printInt32( F_CPU / 1000 );
+		print(NL);
+		*/
+	}
 	ARM_DWT_CYCCNT = 0;
 	ARM_DWT_CTRL |= ARM_DWT_CTRL_CYCCNTENA;
 #endif
@@ -867,12 +890,44 @@ int memcmp( const void *a, const void *b, unsigned int len )
 
 void *memcpy( void *dst, const void *src, unsigned int len )
 {
+// Fast memcpy (Cortex-M4 only), adapted from:
+// https://cboard.cprogramming.com/c-programming/154333-fast-memcpy-alternative-32-bit-embedded-processor-posted-just-fyi-fwiw.html#post1149163
+// Cortex-M4 can do unaligned accesses, even for 32-bit values
+// Uses 32-bit values to do copies instead of 8-bit (should effectively speed up memcpy by 3x)
+#if defined(_cortex_m4_)
+	uint32_t i;
+	uint32_t *pLongSrc;
+	uint32_t *pLongDest;
+	uint32_t numLongs = len / 4;
+	uint32_t endLen = len & 0x03;
+
+	// Convert byte addressing to long addressing
+	pLongSrc = (uint32_t*)src;
+	pLongDest = (uint32_t*)dst;
+
+	// Copy long values, disregarding any 32-bit alignment issues
+	for ( i = 0; i < numLongs; i++ )
+	{
+		*pLongDest++ = *pLongSrc++;
+	}
+
+	// Convert back to byte addressing
+	uint8_t *srcbuf = (uint8_t*)pLongSrc;
+	uint8_t *dstbuf = (uint8_t*)pLongDest;
+
+	// Copy trailing bytes byte-by-byte
+	for (; endLen > 0; --endLen, ++dstbuf, ++srcbuf)
+		*dstbuf = *srcbuf;
+
+	return (dst);
+#else
 	char *dstbuf = dst;
 	const char *srcbuf = src;
 
 	for (; len > 0; --len, ++dstbuf, ++srcbuf)
 		*dstbuf = *srcbuf;
 	return (dst);
+#endif
 }
 
 
@@ -882,11 +937,24 @@ void *memcpy( void *dst, const void *src, unsigned int len )
 __attribute__ ((section(".startup")))
 void ResetHandler()
 {
-	// Disable Watchdog
-	while ( WDOG_TMROUTL < 2 ); // Must wait for WDOG timer if already running, before jumping
+	// Setup Watchdog
+	while ( WDOG_TMROUTL < 2 ); // Must wait for WDOG timer if already running (otherwise settings will fail)
 	WDOG_UNLOCK = WDOG_UNLOCK_SEQ1;
 	WDOG_UNLOCK = WDOG_UNLOCK_SEQ2;
-	WDOG_STCTRLH &= ~WDOG_STCTRLH_WDOGEN;
+	WDOG_STCTRLH = WDOG_STCTRLH_WDOGEN | WDOG_STCTRLH_ALLOWUPDATE;
+
+#if defined(_bootloader_)
+	// Setup watchdog for 1000ms timeout
+	WDOG_TOVALH = 0;
+	WDOG_TOVALL = 1000;
+#endif
+
+	// Stroke watchdog
+	if ( WDOG_STCTRLH_WDOGEN && WDOG_TMROUTL > 2 )
+	{
+		WDOG_REFRESH = WDOG_REFRESH_SEQ1;
+		WDOG_REFRESH = WDOG_REFRESH_SEQ2;
+	}
 
 	uint32_t *src = (uint32_t*)&_etext;
 	uint32_t *dest = (uint32_t*)&_sdata;
@@ -946,7 +1014,7 @@ void ResetHandler()
 	// Default all interrupts to medium priority level
 	for ( unsigned int i = 0; i < NVIC_NUM_INTERRUPTS; i++ )
 	{
-		NVIC_SET_PRIORITY( i, 128 );
+		NVIC_SET_PRIORITY( i, Default_Priority_define );
 	}
 
 	// FLL at 48MHz
@@ -965,7 +1033,7 @@ void ResetHandler()
 	// default all interrupts to medium priority level
 	for ( unsigned int i = 0; i < NVIC_NUM_INTERRUPTS; i++ )
 	{
-		NVIC_SET_PRIORITY( i, 128 );
+		NVIC_SET_PRIORITY( i, Default_Priority_define );
 	}
 
 	// start in FEI mode
@@ -1055,6 +1123,13 @@ void ResetHandler()
 
 	// Intialize entropy for random numbers
 	rand_initialize();
+
+#if !defined(_bootloader_)
+	init_errorLED();
+	errorLED(0);
+
+	memset( (uint8_t*)&VBAT, 0, sizeof(sys_reset_to_loader_magic) );
+#endif
 
 	// Start main
 	main();

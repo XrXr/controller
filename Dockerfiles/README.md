@@ -31,6 +31,7 @@ After you're finished, make sure you're able to run `docker info` in your termin
 ### Windows
 
 * [Installation](https://docs.docker.com/docker-for-windows/install/)
+   - You may need to use the [legacy toolkit](https://docs.docker.com/toolbox/toolbox_install_windows/) if your version of Windows doesn't support Hyper-V
 * [Getting Started](https://docs.docker.com/docker-for-windows/)
 
 After you're finished, make sure you're able to run `docker info` in your terminal window.
@@ -49,13 +50,13 @@ To generate the environment, only need to do this once, or whenever you update t
 
 ```bash
 cd controller/Dockerfiles
-docker build -t controller .
+docker build -f Dockerfile.ubuntu -t controller.ubuntu .
 cd ..
 ```
 
 To enter the build environment.
 ```bash
-docker run -it --rm -v "$(pwd):/controller" controller
+docker run -it --rm -v "$(pwd):/controller" controller.ubuntu
 ```
 
 To exit the docker environment.

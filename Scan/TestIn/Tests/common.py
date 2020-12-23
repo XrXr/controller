@@ -2,25 +2,25 @@
 Common functions for Host-side KLL tests
 '''
 
-# Copyright (C) 2016-2018 by Jacob Alexander
+# Copyright (C) 2016-2020 by Jacob Alexander
 #
 # This file is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
+# it under the terms of the GNU Lesser General Public License as published by
 # the Free Software Foundation, either version 3 of the License, or
 # (at your option) any later version.
 #
 # This file is distributed in the hope that it will be useful,
 # but WITHOUT ANY WARRANTY; without even the implied warranty of
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
+# GNU Lesser General Public License for more details.
 #
-# You should have received a copy of the GNU General Public License
+# You should have received a copy of the GNU Lesser General Public License
 # along with this file.  If not, see <http://www.gnu.org/licenses/>.
 
 ### Imports ###
 
+import copy
 import inspect
-import json
 import linecache
 import logging
 import sys
@@ -217,9 +217,17 @@ class KLLTest:
             # Set current test, used by sub-test children for debugging
             self.cur_test = index
 
+            ## TODO Run Permutation Start
+
+            # Make sure we're in NKRO mode
+            interface.control.cmd('setKbdProtocol')(1)
+
             # Prepare layer setting
             # Run loop, to make sure layer is engaged already
             interface.control.cmd('lockLayer')(test.layer)
+
+            # Clear any pending trigger events
+            interface.control.cmd('clearMacroTriggerEventBuffer')()
 
             # Run test, and record result
             test.result = test.unit.run()
@@ -229,6 +237,8 @@ class KLLTest:
 
             # Cleanup layer manipulations
             interface.control.cmd('clearLayers')()
+
+            ## TODO Run Permutation Start
 
             # Check if test has failed
             if not test.result:
@@ -347,6 +357,7 @@ class TriggerResultEval(EvalBase):
 
         # Trigger Evaluation
         if not self.trigger.done():
+            self.trigger.trigger_permutations()
             if not self.trigger.eval():
                 return False
 
@@ -478,6 +489,12 @@ class TriggerEval:
         self.clean = -1
         self.cleaned = -1
 
+        # Settings
+        # TODO (HaaTa): Expose these 2 variables somehow, they are useful for testing combos
+        self.reverse_combo = False
+        self.delayed_combo = False
+        self.sub_step = 0 # Used with delayed_combo
+
         # Build sequence of combos
         self.trigger = []
         for comboindex, combo in enumerate(self.entry):
@@ -492,6 +509,22 @@ class TriggerEval:
                 ncombo.append(TriggerElem(self, elem, elemschedule))
             self.trigger.append(ncombo)
 
+    def trigger_permutations(self):
+        '''
+        Calculate the number of order permutations the trigger can be initiated with.
+        For example:
+        U"RCtrl" + U"RAlt" : U"A";
+        can be processed 3 ways.
+
+        1) RCtrl + RAlt in the same cycle
+        2) RCtrl in the first cycle, RAlt in the second cycle
+        3) RAlt in the first cycle, RCtrl in the second cycle
+
+        Only triggers need permutation testing.
+        '''
+        # TODO
+        pass
+
     def eval(self):
         '''
         Attempt to evaluate TriggerEval
@@ -503,16 +536,31 @@ class TriggerEval:
         if self.step > len(self.trigger):
             return False
 
+        # Reverse combo
+        combo = copy.copy(self.trigger[self.step])
+        if self.reverse_combo:
+            combo.reverse()
+
+        # Delayed combo
+        if self.delayed_combo:
+            combo = [combo[self.sub_step]]
+        self.sub_step += 1
+
         # Attempt to evaluate each element in the current combo
         finished = True
-        for elem in self.trigger[self.step]:
+        for elem in combo:
             if not elem.eval():
                 finished = False
+
+        # Only increment if sub_steps are complete
+        if self.delayed_combo:
+            finished = finished and self.sub_step >= len(self.trigger[self.step])
 
         # Increment step if finished
         if finished:
             self.step += 1
             self.clean += 1
+            self.sub_step = 0 # Reset on each combo
 
         # Always return True (even if not finished)
         # Only return False on an unexpected error
@@ -678,6 +726,9 @@ class TriggerElem:
         '''
         # TODO (HaaTa) Handle scheduling
         import interface as i
+        LayerStateType = i.control.scan.LayerStateType
+        ScheduleState = i.control.scan.ScheduleState
+        TriggerType = i.control.scan.TriggerType
 
         logger.debug("TriggerElem eval {} {}", self.elem, self.schedule)
 
@@ -685,7 +736,30 @@ class TriggerElem:
         # ScanCode
         if self.elem['type'] == 'ScanCode':
             # Press given ScanCode
-            i.control.cmd('addScanCode')(self.elem['uid'])
+            # TODO (HaaTa): Support uids greater than 255
+            i.control.cmd('addScanCode')(self.elem['uid'], TriggerType.Switch1)
+
+        # IndicatorCode
+        elif self.elem['type'] == 'IndCode':
+            # Activate Indicator
+            i.control.cmd('addScanCode')(self.elem['uid'], TriggerType.LED1)
+
+        # Layer
+        elif self.elem['type'] in ['Layer', 'LayerShift', 'LayerLatch', 'LayerLock']:
+            # Determine which layer type
+            layer_state = LayerStateType.Shift
+            if self.elem['type'] == 'LayerLatch':
+                layer_state = LayerStateType.Latch
+            elif self.elem['type'] == 'LayerLock':
+                layer_state = LayerStateType.Lock
+
+            # Activate layer
+            i.control.cmd('applyLayer')(ScheduleState.P, self.elem['uid'], layer_state)
+
+        # Generic Trigger
+        elif self.elem['type'] in ['GenericTrigger']:
+            # Activate trigger
+            i.control.cmd('setTriggerCode')(self.elem['uid'], self.elem['idcode'], self.elem['schedule'][0]['state'] )
 
         # Unknown TriggerElem
         else:
@@ -701,6 +775,9 @@ class TriggerElem:
         '''
         # TODO (HaaTa) Handle scheduling
         import interface as i
+        LayerStateType = i.control.scan.LayerStateType
+        ScheduleState = i.control.scan.ScheduleState
+        TriggerType = i.control.scan.TriggerType
 
         logger.debug("TriggerElem cleanup {} {}", self.elem, self.schedule)
 
@@ -708,7 +785,35 @@ class TriggerElem:
         # ScanCode
         if self.elem['type'] == 'ScanCode':
             # Press given ScanCode
-            i.control.cmd('removeScanCode')(self.elem['uid'])
+            # TODO (HaaTa): Support uids greater than 255
+            i.control.cmd('removeScanCode')(self.elem['uid'], TriggerType.Switch1)
+
+        # IndicatorCode
+        elif self.elem['type'] == 'IndCode':
+            # Activate Indicator
+            i.control.cmd('removeScanCode')(self.elem['uid'], TriggerType.LED1)
+
+        # Layer Trigger
+        elif self.elem['type'] in ['Layer', 'LayerShift', 'LayerLatch', 'LayerLock']:
+            # Determine which layer type
+            state = ScheduleState.R
+            layer_state = LayerStateType.Shift
+            if self.elem['type'] == 'LayerLatch':
+                state = ScheduleState.P
+                layer_state = LayerStateType.Latch
+            elif self.elem['type'] == 'LayerLock':
+                state = ScheduleState.P
+                layer_state = LayerStateType.Lock
+
+            # Deactivate layer
+            i.control.cmd('applyLayer')(state, self.elem['uid'], layer_state)
+
+        # Generic Trigger
+        elif self.elem['type'] in ['GenericTrigger']:
+            # Do nothing as we don't know how to clean up this trigger
+            # XXX (HaaTa): It can be possible to deduce from the idcode what type of trigger this is
+            #              However, not all triggers have an inverse (some just cleanup on their own such as rotations)
+            pass
 
         # Unknown TriggerElem
         else:
@@ -769,6 +874,10 @@ class ResultElem:
             # Expected arg needs to be looked up for Animations
             value = i.control.json_input['AnimationSettings'][self.elem['setting']]
             self.expected_args = [value]
+        elif elemtype == 'None':
+            # None is just usbKeyOut with keycode 0 (which is nothing)
+            self.name = i.control.json_input['CodeLookup']['USBCode']
+            self.expected_args = [0] # This is None
         else:
             # Otherwise uid is used for the arg
             self.expected_args = [self.elem['uid']]
@@ -801,17 +910,43 @@ class ResultElem:
         '''
         # TODO (HaaTa) Handle scheduling
         import interface as i
+        TriggerType = i.control.scan.TriggerType
 
         # Lookup capability history, success if any capabilities match
         match = None
         for cap in i.control.data.capability_history.all():
             data = cap.callbackdata
             # Validate state and capability name
-            if data.state == state and data.read_capability()[0] == self.name:
+            # Rotations use states beyond 0x0F
+            if (
+                data.read_capability()[0] == self.name and (
+                    (data.state & 0x0F) == state or
+                    (data.state == state and data.stateType == TriggerType.Rotation1)
+                )
+            ):
                 # Validate args
                 match_args = True
-                for index in range(len(self.expected_args)):
-                    if data.args[index] != self.expected_args[index]:
+
+                # XXX Each data argument may consist of multiple bytes
+                #     This can be looked up using kll.json
+                #     Generally 1, 2 and 4 (8-bit, 16-bit and 32-bit)
+                capability = i.control.json_input['Capabilities'][self.name]
+                byte_pos = 0
+                for index in range(capability['args_count']):
+                    value_width = capability['args'][index]['width']
+                    value = 0
+                    if value_width == 1:
+                        value = data.args[byte_pos]
+                        byte_pos += 1
+                    elif value_width == 2:
+                        value = (data.args[byte_pos + 1] << 8) | data.args[byte_pos]
+                        byte_pos += 2
+                    elif value_width == 4:
+                        value = (data.args[byte_pos + 3] << 24) | (data.args[byte_pos + 2] << 16) | (data.args[byte_pos + 1] << 8) | data.args[byte_pos]
+                        byte_pos += 4
+
+                    # Check read value vs. expected
+                    if value != self.expected_args[index]:
                         match_args = False
                         break
 
@@ -845,12 +980,16 @@ class ResultElem:
         @return: True if found, False if not.
         '''
         # TODO (HaaTa) Handle scheduling
+        if len(self.parent.parent.trigger.entry[-1][-1]['schedule']) > 0:
+            state = self.parent.parent.trigger.entry[-1][-1]['schedule'][0]['state']
+        else:
+            state = 1
 
         # Check capability state
-        result = self.monitor_state(1)
+        result = self.monitor_state(state)
 
         # Validate capability result
-        result = result and self.validation.verify(1)
+        result = result and self.validation.verify(state)
 
         return result
 
@@ -860,15 +999,28 @@ class ResultElem:
 
         @return: True if expected cleanup occured, False if not.
         '''
+        import interface as i
+        TriggerType = i.control.scan.TriggerType
         # TODO (HaaTa) Handle scheduling
 
-        # Check capability state
-        result = self.monitor_state(3)
+        # If not a generic trigger, don't check for cleanup
+        trigger = self.parent.parent.trigger.entry[-1][-1]
+        if trigger['type'] == 'GenericTrigger':
+            # If this is a rotation trigger, don't check for cleanup (single-shot)
+            if trigger['idcode'] == TriggerType.Rotation1:
+                return True
 
-        # Validate capability result cleanup
-        result = result and self.validation.verify(3)
+            # If this is a layer trigger, don't check for clenau
 
-        return result
+            # Check capability state
+            result = self.monitor_state(3)
+
+            # Validate capability result cleanup
+            result = result and self.validation.verify(3)
+
+            return result
+
+        return True
 
     def __repr__(self):
         '''
@@ -998,7 +1150,7 @@ class LayerVerification(CapabilityVerification):
                 state,
                 cur.state[expected_layer],
             ))
-        except:
+        except Exception:
             return check(False, "test:{} expectedlayer:{} expectedtype:{} state:{}".format(
                 self.parent.parent.parent.parent.cur_test,
                 expected_layer,
@@ -1028,6 +1180,12 @@ class USBCodeVerification(CapabilityVerification):
 
         # Get USB Keyboard data
         data = i.control.data.usb_keyboard()
+
+        # Could not acquire keyboard data
+        if data is None:
+            return check(False, "Could not retrieve data from usb_keyboards()  Expected: {}".format(
+                expected,
+            ))
 
         logger.debug("Data: {}  Expected: {}", data, expected)
 

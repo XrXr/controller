@@ -1,4 +1,4 @@
-/* Copyright (C) 2015-2017 by Jacob Alexander
+/* Copyright (C) 2015-2020 by Jacob Alexander
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -24,6 +24,7 @@
 // ----- Includes -----
 
 // Compiler Includes
+#include <stdint.h>
 
 // Project Includes
 #include <Lib/mcu_compat.h>
@@ -34,6 +35,7 @@
 
 #define NL "\r\n"
 //#define FLASH_DEBUG // XXX: Use when there are USB flashing issues
+//#define BOOT_DEBUG // XXX: Use when wanting to fault back to SAM-BA
 
 
 
@@ -46,7 +48,7 @@
 
 // ----- Functions -----
 
-#if defined(_kii_v1_) || defined(_kii_v2_)
+#if defined(_kii_v1_) || defined(_kii_v2_) || defined(_kii_v3_)
 int Output_putstr( char* str );
 
 int uart_serial_write( const void *buffer, uint32_t size );

@@ -1,16 +1,16 @@
-/* Copyright (C) 2014-2018 by Jacob Alexander
+/* Copyright (C) 2014-2020 by Jacob Alexander
  *
  * This file is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
+ * it under the terms of the GNU Lesser General Public License as published by
  * the Free Software Foundation, either version 3 of the License, or
  * (at your option) any later version.
  *
  * This file is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+ * GNU Lesser General Public License for more details.
  *
- * You should have received a copy of the GNU General Public License
+ * You should have received a copy of the GNU Lesser General Public License
  * along with this file.  If not, see <http://www.gnu.org/licenses/>.
  */
 
@@ -156,7 +156,7 @@ void Trigger_showTriggerMacroVote( TriggerMacroVote vote, uint8_t long_trigger_m
 
 // -- General --
 
-// Determine if long ResultMacro (more than 1 seqence element)
+// Determine if long ResultMacro (more than 1 sequence element)
 uint8_t Trigger_isLongResultMacro( const ResultMacro *macro )
 {
 	// Check the second sequence combo length
@@ -179,151 +179,399 @@ uint8_t Trigger_isLongTriggerMacro( const TriggerMacro *macro )
 }
 
 
-// Votes on the given key vs. guide, short macros
-TriggerMacroVote Trigger_evalShortTriggerMacroVote( TriggerEvent *event, TriggerGuide *guide )
+// Handle short trigger PHRO/AODO state transitions
+TriggerMacroVote Trigger_evalShortTriggerMacroVote_PHRO( ScheduleState state )
 {
+	switch ( state & 0x0F )
+	{
+	// Correct key, pressed, possible passing
+	case ScheduleType_P:
+		return TriggerMacroVote_Pass;
+
+	// Correct key, held, possible passing or release
+	case ScheduleType_H:
+		return TriggerMacroVote_PassRelease;
+
+	// Correct key, released, possible release
+	case ScheduleType_R:
+		return TriggerMacroVote_Release;
+
+	// Invalid state, fail
+	default:
+		return TriggerMacroVote_Fail;
+	}
+}
+
+
+// Handle short trigger DRO state transitions
+TriggerMacroVote Trigger_evalShortTriggerMacroVote_DRO( ScheduleState state )
+{
+	switch ( state )
+	{
+	// Correct event, possible passing
+	case ScheduleType_Done:
+	case ScheduleType_Repeat:
+		return TriggerMacroVote_Pass;
+
+	// Invalid state, fail
+	default:
+		return TriggerMacroVote_Fail;
+	}
+}
+
+
+// Votes on the given key vs. guide, short macros
+TriggerMacroVote Trigger_evalShortTriggerMacroVote( TriggerEvent *event, TriggerGuide *guide, TriggerMacroVote *cur_vote )
+{
+	// Lookup full index
+	var_uint_t guide_index = KLL_TriggerIndex_loopkup( guide->type, guide->scanCode );
+	var_uint_t event_index = KLL_TriggerIndex_loopkup( event->type, event->index );
+
+	// Return value
+	TriggerMacroVote vote = TriggerMacroVote_Invalid;
+
 	// Depending on key type
 	switch ( guide->type )
 	{
 	// Normal State Type
 	case TriggerType_Switch1:
+	case TriggerType_Switch2:
+	case TriggerType_Switch3:
+	case TriggerType_Switch4:
+	// LED State Type
+	case TriggerType_LED1:
+	// Layer State Type
+	case TriggerType_Layer1:
+	case TriggerType_Layer2:
+	case TriggerType_Layer3:
+	case TriggerType_Layer4:
+	// Activity State Types
+	case TriggerType_Sleep1:
+	case TriggerType_Resume1:
+	case TriggerType_Inactive1:
+	case TriggerType_Active1:
 		// For short TriggerMacros completely ignore incorrect keys
-		if ( guide->scanCode == event->index )
+		// Only monitor 0x70 bits if set in the guide, otherwise ensure they are 0x00
+		// Used for Layer state information
+		if (
+			guide_index == event_index &&
+			guide->type == event->type &&
+			(
+				(guide->state & 0x70) == (event->state & 0x70) ||
+				(guide->state & 0x70) == 0x00
+			)
+		)
 		{
-			switch ( event->state )
+			// If this trigger is generic, we can just vote based on the incoming state
+			if ( guide->state & ScheduleType_Gen )
 			{
-			// Correct key, pressed, possible passing
-			case ScheduleType_P:
-				return TriggerMacroVote_Pass;
-
-			// Correct key, held, possible passing or release
-			case ScheduleType_H:
-				return TriggerMacroVote_PassRelease;
-
-			// Correct key, released, possible release
-			case ScheduleType_R:
-				return TriggerMacroVote_Release;
-
-			// Invalid state, fail
-			default:
-				return TriggerMacroVote_Fail;
+				vote = Trigger_evalShortTriggerMacroVote_PHRO( event->state );
+				break;
 			}
+
+			// TODO (HaaTa) Implement state scheduling
+			erro_printNL("State Scheduling not implemented yet...");
+		}
+
+		vote = TriggerMacroVote_DoNothing;
+		break;
+
+	/*
+	// LED State Type
+	case TriggerType_LED1:
+		// XXX (HaaTa) This is an initial version of State Scheduling
+		//             For any state match that is not ScheduleType_A, set to ScheduleType_A
+		//             as this will indicate a pulse to the capability.
+		if (
+			guide_index == event_index &&
+			guide->type == event->type
+		)
+		{
+			// When state scheduling is specified
+			// TODO (HaaTa); We should probably move to another state type for "auto" schedule types
+			if ( guide->state == event->state && guide->state != ScheduleType_A )
+			{
+				return Trigger_evalShortTriggerMacroVote_PHRO( ScheduleType_A );
+			}
+			//return Trigger_evalShortTriggerMacroVote_PHRO( event->state );
 		}
 
 		return TriggerMacroVote_DoNothing;
-
-	// LED State Type
-	case TriggerType_LED1:
-		erro_print("LED State Type - Not implemented...");
-		break;
+	*/
 
 	// Analog State Type
 	case TriggerType_Analog1:
-		erro_print("Analog State Type - Not implemented...");
-		break;
-
-	// Layer State Type
-	case TriggerType_Layer1:
-		erro_print("Layer State Type - Not implemented...");
+	case TriggerType_Analog2:
+	case TriggerType_Analog3:
+	case TriggerType_Analog4:
+		erro_printNL("Analog State Type - Not implemented...");
 		break;
 
 	// Animation State Type
 	case TriggerType_Animation1:
-		erro_print("Animation State Type - Not implement...");
+	case TriggerType_Animation2:
+	case TriggerType_Animation3:
+	case TriggerType_Animation4:
+		// For short TriggerMacros completely ignore incorrect triggers
+		if (
+			guide_index == event_index &&
+			guide->type == event->type &&
+			guide->state == event->state
+		)
+		{
+			vote = Trigger_evalShortTriggerMacroVote_DRO( event->state );
+			break;
+		}
+
+		vote = TriggerMacroVote_DoNothing;
+		break;
+
+	// Rotation State Type
+	case TriggerType_Rotation1:
+		// Rotation triggers use state as the index, rather than encoding a type of action
+		// There is only "activated" state for rotations, which is only sent once
+		// This makes rotations not so useful for long macros
+		// (though it may be possible to implement it if there is demand)
+		if (
+			guide_index == event_index &&
+			guide->type == event->type &&
+			guide->state == event->state // <== This is the rotation position
+		)
+		{
+			// Only ever "Pressed", other states are not used with rotations
+			vote = Trigger_evalShortTriggerMacroVote_PHRO( ScheduleType_P );
+			break;
+		}
+
+		vote = TriggerMacroVote_DoNothing;
+		break;
+
+	// Dial State Type
+	case TriggerType_Dial1:
+		// Dial triggers encode the direction of the event
+		// There is only "activated" state for dials, which is only sent once
+		// This makes dials not so useful for long macros
+		// (though it may be possible to implement it if there is demand)
+		if (
+			guide_index == event_index &&
+			guide->type == event->type &&
+			guide->state == event->state
+		)
+		{
+			// Only ever "Pressed", other states are not used with rotations
+			vote = Trigger_evalShortTriggerMacroVote_PHRO( ScheduleType_P );
+			break;
+		}
+
+		vote = TriggerMacroVote_DoNothing;
 		break;
 
 	// Invalid State Type
 	default:
-		erro_print("Invalid State Type. This is a bug.");
+		erro_printNL("Invalid State Type. This is a bug.");
 		break;
 	}
 
-	// XXX Shouldn't reach here
-	return TriggerMacroVote_Invalid;
+	// If this is a combo macro, make a preference for TriggerMacroVote_Pass instead of TriggerMacroVote_PassRelease
+	if ( *cur_vote != TriggerMacroVote_Invalid && event_index == guide_index )
+	{
+		// Make sure the votes are different and one of them are Pass
+		if ( *cur_vote != vote
+			&& ( *cur_vote == TriggerMacroVote_Pass || vote == TriggerMacroVote_Pass )
+			&& ( *cur_vote == TriggerMacroVote_PassRelease || vote == TriggerMacroVote_PassRelease )
+		)
+		{
+			*cur_vote = TriggerMacroVote_Pass;
+			vote = TriggerMacroVote_Pass;
+		}
+	}
+
+	return vote;
+}
+
+
+// Handle long trigger PHRO/AODO state transitions
+TriggerMacroVote Trigger_evalLongTriggerMacroVote_PHRO( ScheduleState state, uint8_t correct )
+{
+	// Correct scancode match
+	if ( correct )
+	{
+		switch ( state )
+		{
+		// Correct key, pressed, possible passing
+		case ScheduleType_P:
+			return TriggerMacroVote_Pass;
+
+		// Correct key, held, possible passing or release
+		case ScheduleType_H:
+			return TriggerMacroVote_PassRelease;
+
+		// Correct key, released, possible release
+		case ScheduleType_R:
+			return TriggerMacroVote_Release;
+
+		// Invalid state, fail
+		default:
+			return TriggerMacroVote_Fail;
+		}
+	}
+	// Incorrect scancode match
+	else
+	{
+		switch ( state )
+		{
+		// Wrong key, pressed, fail
+		case ScheduleType_P:
+			return TriggerMacroVote_Fail;
+
+		// Wrong key, held, do not pass (no effect)
+		case ScheduleType_H:
+			return TriggerMacroVote_DoNothing;
+
+		// Wrong key released, fail out if pos == 0
+		case ScheduleType_R:
+			return TriggerMacroVote_DoNothing | TriggerMacroVote_DoNothingRelease;
+
+		// Invalid state, fail
+		default:
+			return TriggerMacroVote_Fail;
+		}
+	}
+}
+
+
+// Handle long trigger DRO state transitions
+TriggerMacroVote Trigger_evalLongTriggerMacroVote_DRO( ScheduleState state, uint8_t correct )
+{
+	// Correct match
+	if ( correct )
+	{
+		switch ( state )
+		{
+		// Correct event, possible passing
+		case ScheduleType_Done:
+		case ScheduleType_Repeat:
+			return TriggerMacroVote_Pass;
+
+		// Invalid state, fail
+		default:
+			return TriggerMacroVote_Fail;
+		}
+	}
+	// Incorrect match
+	else
+	{
+		return TriggerMacroVote_Fail;
+	}
 }
 
 
 // Votes on the given key vs. guide, long macros
 // A long macro is defined as a guide with more than 1 combo
-TriggerMacroVote Trigger_evalLongTriggerMacroVote( TriggerEvent *event, TriggerGuide *guide )
+TriggerMacroVote Trigger_evalLongTriggerMacroVote( TriggerEvent *event, TriggerGuide *guide, TriggerMacroVote *cur_vote )
 {
+	// Lookup full index
+	var_uint_t guide_index = KLL_TriggerIndex_loopkup( guide->type, guide->scanCode );
+	var_uint_t event_index = KLL_TriggerIndex_loopkup( event->type, event->index );
+
 	// Depending on key type
 	switch ( guide->type )
 	{
 	// Normal State Type
 	case TriggerType_Switch1:
-		// Depending on the state of the buffered key, make voting decision
-		// Incorrect key
-		if ( guide->scanCode != event->index )
-		{
-			switch ( event->state )
-			{
-			// Wrong key, pressed, fail
-			case ScheduleType_P:
-				return TriggerMacroVote_Fail;
-
-			// Wrong key, held, do not pass (no effect)
-			case ScheduleType_H:
-				return TriggerMacroVote_DoNothing;
-
-			// Wrong key released, fail out if pos == 0
-			case ScheduleType_R:
-				return TriggerMacroVote_DoNothing | TriggerMacroVote_DoNothingRelease;
-
-			// Invalid state, fail
-			default:
-				return TriggerMacroVote_Fail;
-			}
-		}
-
-		// Correct key
-		else
-		{
-			switch ( event->state )
-			{
-			// Correct key, pressed, possible passing
-			case ScheduleType_P:
-				return TriggerMacroVote_Pass;
-
-			// Correct key, held, possible passing or release
-			case ScheduleType_H:
-				return TriggerMacroVote_PassRelease;
-
-			// Correct key, released, possible release
-			case ScheduleType_R:
-				return TriggerMacroVote_Release;
-
-			// Invalid state, fail
-			default:
-				return TriggerMacroVote_Fail;
-			}
-		}
-
-		break;
-
+	case TriggerType_Switch2:
+	case TriggerType_Switch3:
+	case TriggerType_Switch4:
 	// LED State Type
 	case TriggerType_LED1:
-		erro_print("LED State Type - Not implemented...");
+	// Layer State Type
+	case TriggerType_Layer1:
+	case TriggerType_Layer2:
+	case TriggerType_Layer3:
+	case TriggerType_Layer4:
+	// Activity State Types
+	case TriggerType_Sleep1:
+	case TriggerType_Resume1:
+	case TriggerType_Inactive1:
+	case TriggerType_Active1:
+		// Depending on the state of the buffered key, make voting decision
+		// Only monitor 0x70 bits if set in the guide, otherwise ensure they are 0x00
+		// Used for Layer state information
+		// Correct key
+		if (
+			guide_index == event_index &&
+			guide->type == event->type &&
+			(
+				(guide->state & 0x70) == (event->state & 0x70) ||
+				(guide->state & 0x70) == 0x00
+			)
+		)
+		{
+			return Trigger_evalLongTriggerMacroVote_PHRO( event->state, 1 );
+		}
+		// Incorrect key
+		else
+		{
+			return Trigger_evalLongTriggerMacroVote_PHRO( event->state, 0 );
+		}
+
 		break;
 
 	// Analog State Type
 	case TriggerType_Analog1:
-		erro_print("Analog State Type - Not implemented...");
-		break;
-
-	// Layer State Type
-	case TriggerType_Layer1:
-		erro_print("Layer State Type - Not implemented...");
+	case TriggerType_Analog2:
+	case TriggerType_Analog3:
+	case TriggerType_Analog4:
+		erro_printNL("Analog State Type - Not implemented...");
 		break;
 
 	// Animation State Type
 	case TriggerType_Animation1:
-		erro_print("Animation State Type - Not implement...");
+	case TriggerType_Animation2:
+	case TriggerType_Animation3:
+	case TriggerType_Animation4:
+		// Depending on the state of the buffered key, make voting decision
+		// Correct trigger
+		if (
+			guide_index == event_index &&
+			guide->type == event->type &&
+			guide->state == event->state
+		)
+		{
+			return Trigger_evalLongTriggerMacroVote_DRO( event->state, 1 );
+		}
+		// Incorrect trigger
+		else
+		{
+			return Trigger_evalLongTriggerMacroVote_DRO( event->state, 0 );
+		}
+
+		break;
+
+	// Rotation State Type
+	case TriggerType_Rotation1:
+		// Rotation triggers use state as the index, rather than encoding a type of action
+		// There is only "activated" state for rotations, which is only sent once
+		// This makes rotations not so useful for long macros
+		// (though it may be possible to implement it if there is demand)
+		// TODO
+		erro_printNL("Rotation State Type (Long Macros) - Not implemented...");
+		break;
+
+	// Dial State Type
+	case TriggerType_Dial1:
+		// Dial triggers are single shot events
+		// The Off event is not sent (though it does exist)
+		// So all events must be single shot
+		// This make dials not so useful when constructing long macros
+		// (though it may be possible to implement it if there is demand)
+		// TODO
+		erro_printNL("Dial State Type (Long Macros) - Not implemented...");
 		break;
 
 	// Invalid State Type
 	default:
-		erro_print("Invalid State Type. This is a bug.");
+		erro_printNL("Invalid State Type. This is a bug.");
 		break;
 	}
 
@@ -363,8 +611,8 @@ TriggerMacroVote Trigger_overallVote(
 
 			// Vote on triggers
 			vote |= long_trigger_macro
-				? Trigger_evalLongTriggerMacroVote( triggerInfo, guide )
-				: Trigger_evalShortTriggerMacroVote( triggerInfo, guide );
+				? Trigger_evalLongTriggerMacroVote( triggerInfo, guide, &overallVote )
+				: Trigger_evalShortTriggerMacroVote( triggerInfo, guide, &overallVote );
 		}
 
 		// Mask out incorrect votes, if anything indicates a pass
@@ -441,7 +689,9 @@ TriggerMacroEval Trigger_evalTriggerMacro( var_uint_t triggerMacroIndex )
 		{
 		case 1:
 			Trigger_showTriggerMacroVote( overallVote, long_trigger_macro );
-			print( NL );
+			print(" TriggerMacroList[");
+			printInt16( triggerMacroIndex );
+			print("]");
 			break;
 		}
 
@@ -467,7 +717,7 @@ TriggerMacroEval Trigger_evalTriggerMacro( var_uint_t triggerMacroIndex )
 			// If this is the last combo in the sequence, trigger result
 			if ( macro->guide[ pos + comboLength + 1 ] == 0 )
 			{
-				return TriggerMacroEval_DoResult;
+				return TriggerMacroEval_DoResultAndRemove;
 			}
 		}
 		// If ready for transition and in Press state, increment combo position
@@ -477,9 +727,9 @@ TriggerMacroEval Trigger_evalTriggerMacro( var_uint_t triggerMacroIndex )
 
 			// If this is the last combo in the sequence, trigger result
 			// Or, the final release of a sequence
-			if ( macro->guide[ pos + comboLength + 1 ] == 0 || comboLength == 0 )
+			if ( comboLength == 0 || macro->guide[ pos + comboLength + 1 ] == 0 )
 			{
-				return TriggerMacroEval_DoResult;
+				return TriggerMacroEval_DoResultAndRemove;
 			}
 		}
 		// If passing and in Waiting state, set macro state to Press
@@ -491,7 +741,7 @@ TriggerMacroEval Trigger_evalTriggerMacro( var_uint_t triggerMacroIndex )
 			// If this is the last combo in the sequence, trigger result
 			if ( macro->guide[ pos + comboLength + 1 ] == 0 )
 			{
-				return TriggerMacroEval_DoResult;
+				return TriggerMacroEval_DoResultAndRemove;
 			}
 		}
 	}
@@ -510,7 +760,9 @@ TriggerMacroEval Trigger_evalTriggerMacro( var_uint_t triggerMacroIndex )
 		{
 		case 1:
 			Trigger_showTriggerMacroVote( overallVote, long_trigger_macro );
-			print( NL );
+			print(" TriggerMacroList[");
+			printInt16( triggerMacroIndex );
+			print("]");
 			break;
 		}
 
@@ -619,6 +871,49 @@ void Trigger_updateTriggerMacroPendingList()
 }
 
 
+// Determines whether or not a scancode is used on a trigger
+// index -> index within trigger list
+uint8_t Trigger_DetermineScanCodeOnTrigger( const Layer *layer, uint8_t index )
+{
+	// Check all triggers
+	for ( uint8_t trigger = 1; trigger <= layer->triggerMap[index][0]; trigger++ )
+	{
+		// Trigger element
+		nat_ptr_t elem = layer->triggerMap[index][trigger];
+
+		// Lookup trigger type
+		const uint8_t *pos = TriggerMacroList[elem].guide;
+
+		// If there are no elements, ignore
+		if ( pos[0] == 0 )
+		{
+			continue;
+		}
+
+		// Only look at first type, no need to go further
+		// XXX (HaaTa) This may cause bugs, but it's not as likely
+		//             It's also much faster to only check the first type
+		switch ( pos[1] )
+		{
+		case TriggerType_Switch1:
+		case TriggerType_Switch2:
+		case TriggerType_Switch3:
+		case TriggerType_Switch4:
+		case TriggerType_Analog1:
+		case TriggerType_Analog2:
+		case TriggerType_Analog3:
+		case TriggerType_Analog4:
+			return 1;
+		default:
+			break;
+		}
+	}
+
+	// No triggers
+	return 0;
+}
+
+
 void Trigger_setup()
 {
 	// Initialize TriggerMacro states
@@ -660,17 +955,29 @@ void Trigger_process()
 		{
 		// Trigger Result Macro (purposely falling through)
 		case TriggerMacroEval_DoResult:
+			if ( voteDebugMode )
+			{
+				print(" DR");
+			}
 			// Append ResultMacro to PendingList
 			Result_appendResultMacroToPendingList(
 				&TriggerMacroList[ cur_macro ]
 			);
 
 		default:
+			if ( voteDebugMode )
+			{
+				print(" _" NL);
+			}
 			macroTriggerMacroPendingList[ macroTriggerMacroPendingListTail++ ] = cur_macro;
 			break;
 
 		// Trigger Result Macro and Remove (purposely falling through)
 		case TriggerMacroEval_DoResultAndRemove:
+			if ( voteDebugMode )
+			{
+				print(" DRaR");
+			}
 			// Append ResultMacro to PendingList
 			Result_appendResultMacroToPendingList(
 				&TriggerMacroList[ cur_macro ]
@@ -678,6 +985,10 @@ void Trigger_process()
 
 		// Remove Macro from Pending List, nothing to do, removing by default
 		case TriggerMacroEval_Remove:
+			if ( voteDebugMode )
+			{
+				print(" R" NL);
+			}
 			break;
 		}
 	}

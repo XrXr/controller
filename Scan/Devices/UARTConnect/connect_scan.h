@@ -1,16 +1,16 @@
-/* Copyright (C) 2014-2017 by Jacob Alexander
+/* Copyright (C) 2014-2019 by Jacob Alexander
  *
  * This file is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
+ * it under the terms of the GNU Lesser General Public License as published by
  * the Free Software Foundation, either version 3 of the License, or
  * (at your option) any later version.
  *
  * This file is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+ * GNU Lesser General Public License for more details.
  *
- * You should have received a copy of the GNU General Public License
+ * You should have received a copy of the GNU Lesser General Public License
  * along with this file.  If not, see <http://www.gnu.org/licenses/>.
  */
 
@@ -22,6 +22,17 @@
 #include <kll.h>
 
 
+// ----- Defines -----
+
+// Special packet values
+#define SOH 0x01
+#define CABLE_CHECK_ARG 0xD2
+#define BYTE_COUNT_START 0xFFFF
+
+// Node id's
+#define MASTER_ID 0x00
+#define DEFAULT_SLAVE_ID 0xFF
+#define BROADCAST_ID 0xFF
 
 // ----- Enums -----
 
@@ -34,11 +45,12 @@ typedef enum Command {
 	IdReport,         // Slave initialization complete, report id to master
 
 	ScanCode,         // ScanCode event status change
-	Animation,        // Master trigger animation event (same command is sent back to master when ready)
 
 	RemoteCapability, // Activate a capability on the given node
 	RemoteOutput,     // Remote debug output from a given node
 	RemoteInput,      // Remote command to send to a given node's debug cli
+
+	CurrentEvent,     // Signals a current usage event
 
 	Command_TOP,      // Enum bounds
 	Command_SYN = 0x16, // Reserved for error handling
@@ -101,21 +113,6 @@ typedef struct ScanCodeCommand {
 	TriggerGuide firstScanCode[0];
 } ScanCodeCommand;
 
-// Animation Command
-// Initiated by the master whenever an animation id should modify it's state
-// Then after the leaf slave node receives the command, send it back to the master
-// On the way back, each device can begin the animation adjustment
-//
-// The master->leaf command should indicate to each device that it should finish sending the
-// current slave->master data and wait for the leaf->master command
-// This allows for a tighter synchronization of animation events
-typedef struct AnimationCommand {
-	Command command;
-	uint8_t animationId;
-	uint8_t numParams;
-	uint8_t firstParam[0];
-} AnimationCommand;
-
 // Remote Capability Command
 // Initiated by the master to trigger a capability on a given node
 // RemoteOutput is enabled while capability is activated
@@ -149,6 +146,15 @@ typedef struct RemoteInputCommand {
 	uint8_t length;
 	uint8_t firstChar[0];
 } RemoteInputCommand;
+
+// Current Event
+// Initiated by the master whenever the bus has a change in available power
+// Usually occurs when USB goes into suspend (or wakes)
+// Each device in the chain must subtract it's own usage first before sending to the next device
+typedef struct CurrentEventCommand {
+	Command command;
+	uint16_t current; // Current usable on the bus
+} CurrentEventCommand;
 
 
 

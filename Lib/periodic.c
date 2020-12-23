@@ -1,4 +1,4 @@
-/* Copyright (C) 2017-2018 by Jacob Alexander
+/* Copyright (C) 2017-2019 by Jacob Alexander
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -22,6 +22,7 @@
 
 // ----- Includes -----
 
+#include <kll_defs.h>
 #include "mcu_compat.h"
 
 #if defined(_kinetis_)
@@ -38,6 +39,7 @@
 
 #endif
 
+#include "sysview.h"
 
 
 // ----- Variables -----
@@ -72,7 +74,7 @@ void Periodic_init( uint32_t cycles )
 	NVIC_ENABLE_IRQ( IRQ_PIT_CH0 );
 
 	// Set PIT0 interrupt to a low priority
-	NVIC_SET_PRIORITY( IRQ_PIT_CH0, 200 );
+	NVIC_SET_PRIORITY( IRQ_PIT_CH0, Periodic_Priority_define );
 }
 
 void Periodic_enable()
@@ -108,28 +110,29 @@ void pit0_isr()
 }
 
 
-#elif defined(_sam_)
+#elif defined(_sam4s_a_) || defined(_sam4s_b_)
 void Periodic_init( uint32_t cycles )
 {
 	// Enable clock for timer
-	PMC->PMC_PCER0 |= (1 << ID_TC0);
+	// Using Timer Module 1, Channel 3 (TC5)
+	PMC->PMC_PCER0 |= (1 << ID_TC2);
 
-	// Setup Timer Counter to MCK/2 (highest frequency)
-	TC0->TC_CHANNEL[0].TC_CMR = TC_CMR_TCCLKS_TIMER_CLOCK1 | TC_CMR_CPCTRG;
+	// Setup Timer Counter to MCK/32
+	TC0->TC_CHANNEL[2].TC_CMR = TC_CMR_TCCLKS_TIMER_CLOCK3 | TC_CMR_CPCTRG;
 
 	// Timer Count-down value
 	// Number of cycles to count from CPU clock before calling interrupt
-	TC0->TC_CHANNEL[0].TC_RC = TC_RA_RA(cycles/2);
+	TC0->TC_CHANNEL[2].TC_RC = TC_RA_RA(cycles/2);
 
 	// Enable Timer, Enable interrupt
-	TC0->TC_CHANNEL[0].TC_IER = TC_IER_CPCS;
-	TC0->TC_CHANNEL[0].TC_CCR = TC_CCR_CLKEN | TC_CCR_SWTRG;
+	TC0->TC_CHANNEL[2].TC_IER = TC_IER_CPCS;
+	TC0->TC_CHANNEL[2].TC_CCR = TC_CCR_CLKEN | TC_CCR_SWTRG;
 
 	// Enable TC0 interrupt
-	NVIC_EnableIRQ( TC0_IRQn );
+	NVIC_EnableIRQ( TC2_IRQn );
 
 	// Set TC0 interrupt to a low priority
-	NVIC_SetPriority( TC0_IRQn, 200 );
+	NVIC_SetPriority( TC2_IRQn, Periodic_Priority_define );
 }
 
 void Periodic_function( void *func )
@@ -141,26 +144,89 @@ void Periodic_function( void *func )
 void Periodic_enable()
 {
 	// Used to re-enable IRQ
-	NVIC_EnableIRQ( TC0_IRQn );
+	NVIC_EnableIRQ( TC2_IRQn );
 }
 
 void Periodic_disable()
 {
 	// Used to disable IRQ
-	NVIC_DisableIRQ( TC0_IRQn );
+	NVIC_DisableIRQ( TC2_IRQn );
 }
 
 uint32_t Periodic_cycles()
 {
-	return TC0->TC_CHANNEL[0].TC_CV;
+	return TC0->TC_CHANNEL[2].TC_CV;
 }
 
-void TC0_Handler()
+void TC2_Handler()
 {
-	if ( TC0->TC_CHANNEL[0].TC_SR & TC_SR_CPCS )
+	SEGGER_SYSVIEW_RecordEnterISR();
+	uint32_t status = TC0->TC_CHANNEL[2].TC_SR;
+	if ( status & TC_SR_CPCS )
 	{
 		(*periodic_func)();
 	}
+	SEGGER_SYSVIEW_RecordExitISRToScheduler();
+}
+
+
+#elif defined(_sam_)
+void Periodic_init( uint32_t cycles )
+{
+	// Enable clock for timer
+	// Using Timer Module 1, Channel 3 (TC5)
+	PMC->PMC_PCER0 |= (1 << ID_TC5);
+
+	// Setup Timer Counter to MCK/32
+	TC1->TC_CHANNEL[2].TC_CMR = TC_CMR_TCCLKS_TIMER_CLOCK3 | TC_CMR_CPCTRG;
+
+	// Timer Count-down value
+	// Number of cycles to count from CPU clock before calling interrupt
+	TC1->TC_CHANNEL[2].TC_RC = TC_RA_RA(cycles/2);
+
+	// Enable Timer, Enable interrupt
+	TC1->TC_CHANNEL[2].TC_IER = TC_IER_CPCS;
+	TC1->TC_CHANNEL[2].TC_CCR = TC_CCR_CLKEN | TC_CCR_SWTRG;
+
+	// Enable TC0 interrupt
+	NVIC_EnableIRQ( TC5_IRQn );
+
+	// Set TC0 interrupt to a low priority
+	NVIC_SetPriority( TC5_IRQn, Periodic_Priority_define );
+}
+
+void Periodic_function( void *func )
+{
+	// Set function pointer
+	periodic_func = func;
+}
+
+void Periodic_enable()
+{
+	// Used to re-enable IRQ
+	NVIC_EnableIRQ( TC5_IRQn );
+}
+
+void Periodic_disable()
+{
+	// Used to disable IRQ
+	NVIC_DisableIRQ( TC5_IRQn );
+}
+
+uint32_t Periodic_cycles()
+{
+	return TC1->TC_CHANNEL[2].TC_CV;
+}
+
+void TC5_Handler()
+{
+	SEGGER_SYSVIEW_RecordEnterISR();
+	uint32_t status = TC1->TC_CHANNEL[2].TC_SR;
+	if ( status & TC_SR_CPCS )
+	{
+		(*periodic_func)();
+	}
+	SEGGER_SYSVIEW_RecordExitISRToScheduler();
 }
 
 

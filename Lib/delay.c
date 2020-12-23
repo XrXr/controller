@@ -81,7 +81,7 @@ void delay_us( uint32_t us )
 // Delay by specified ms
 void delay_ms( uint32_t ms )
 {
-	uint32_t start = us_now();
+	uint32_t start = ms_now();
 
 	// Loop and yield until the ms count has expired
 	while ( ms_now() - start <= ms )
@@ -99,7 +99,7 @@ inline uint32_t cycle_now()
 #if defined(_kinetis_)
 	return SYST_CVR;
 #elif defined(_sam_)
-	return SCB->SHCSR & SCB_SHCSR_SYSTICKACT_Msk;
+	return SysTick->VAL;
 #else
 #warning "cycle_now not implemented"
 	return 0;

@@ -1,17 +1,180 @@
 # PixelMap
 Name = PixelMapCapabilities;
-Version = 0.3;
-Author = "HaaTa (Jacob Alexander) 2015-2017";
-KLL = 0.5;
+Version = 0.7;
+Author = "HaaTa (Jacob Alexander) 2015-2019";
 
 # Modified Date
-Date = 2017-02-05;
+Date = 2019-02-18;
 
-# Capabilities
+## Capabilities ##
+# XXX (HaaTa): Don't use animation capability, it is deprecated
 animation => Pixel_Animation_capability( index : 2, loops : 1, pfunc : 1, divmask : 1, divshift : 1, replace : 1 );
+
+# animationIndex is the preferred capability to control animation
+# Don't call this capability directly, use A[my_animation]() instead.
 animationIndex => Pixel_AnimationIndex_capability( settingindex : 2 );
+
+# XXX (HaaTa): Not yet complete, do not use
 pixel => Pixel_Pixel_capability();
+
+# LED Test
+# test: WHich test to enable
+#  * See Macro/PixelMap/pixel.c:PixelTest for current list
+#  0  - Off
+#  1  - Channel Single Step
+#  2  - Channel Single Step Reverse
+#  3  - Channel Flash All
+#  4  - Channel Roll
+#  5  - Channel All On
+#  6  - Channel All Off
+#  10 - Pixel Single Step
+#  11 - Pixel Single Step Reverse
+#  12 - Pixel Flash All
+#  13 - Pixel Roll
+#  14 - Pixel All On
+#  15 - Pixel All Off
+#  20 - ScanCode Pixel Single
+#  21 - ScanCode Pixel Single Reverse
+#  22 - ScanCode Pixel Flash All
+#  23 - ScanCode Pixel Roll
+#  30 - XY Pixel Single
+#  31 - XY Pixel Single Reverse
+#  32 - XY Pixel Flash All
+#  33 - XY Pixel Roll
+# index: Where to start test (not relevant for all tests)
+#  * 0xFFFF is a special value that starts from the current position
+ledTest => Pixel_LEDTest_capability( test : 1, index : 2 );
+
+# Gamma Correction
+# 0 - Disabled
+# 1 - Enabled
+# 2 - Toggle
+# See: https://github.com/kiibohd/controller/issues/255 for details
+gamma => Pixel_GammaControl_capability( func : 1 );
+LEDGamma = 2.2;
+gamma_enabled => Pixel_gamma_default_define;
+gamma_enabled = "0"; # 0 - Disabled, 1 - Enabled
+
+# Animation Control
+# 0 - Pause/Resume
+# 1 - ForwardOne
+# 2 - Forward
+# 3 - Stop (clears all animations)
+# 4 - Reset (restarts animations)
+# 5 - Wipe Pause (pauses animations and clears display)
+# 6 - Pause
+# 7 - Clear (clears the display, animations continue)
 animation_control => Pixel_AnimationControl_capability( func : 1 );
+
+# Fade Control
+# profile:
+#  0) Keys
+#  1) Underlighting
+#  2) Indicators
+#  3) Active Layer (must use fade_layer_highlight to re-scan)
+# config: One of 16 configs 0..15
+# period: Time period within profile
+#  0) Off to On
+#  1) On
+#  2) On to Off
+#  3) Off
+# Notes:
+#  * Set all periods in a profile to ( start=0, end=0 ) to disable profile
+#  * Timing is based on the FPS set in the LED driver, confgs are relative to that
+#  * Fading is processed after animations
+fade_set => Pixel_FadeSet_capability( profile : 1, config : 1, period : 1 );
+fade_layer_highlight => Pixel_FadeLayerHighlight_capability( layer : 2 );
+
+# Fade Control
+# Fade brightness is applied before the fade computation is applied
+# Profile: 0..3
+# Command:
+#  0) Resets profile to defaults (arg ignored)
+#  1) Resets all fade profiles to defaults (profile ignored, arg ignored)
+#  2) Sets profile brightness
+#  3) Increment profile brightness
+#  4) Decrement profile brightness
+#  5) Set profile brightness to default
+# Resets all fade profiles to default settings
+fade_control => Pixel_FadeControl_capability( profile : 1, command : 1, arg : 1 );
+
+# Fade Brightness (per profile)
+# From 0 to 255, this is an adjustment on the default brightness using the color PWM
+# One brightness setting per fade group
+KLL_LED_FadeBrightness => KLL_LED_FadeBrightness_define;
+KLL_LED_FadeBrightness[0] = 255;
+KLL_LED_FadeBrightness[1] = 255;
+KLL_LED_FadeBrightness[2] = 255;
+KLL_LED_FadeBrightness[3] = 255;
+
+# Invert Active Layer Fade Selection
+# Chooses the keys not in the active layer to be fade group
+KLL_LED_FadeActiveLayerInvert => KLL_LED_FadeActiveLayerInvert_define;
+KLL_LED_FadeActiveLayerInvert = 0;
+
+# Fade Period
+# .start and .end must be between 0 and 15
+# .start == (1 << start) - 1
+# .end   == (1 << end)
+# This means incrementing end will exponentially increase the time of the period.
+# .start = 0 and .end = 0 disables that time period
+# A non-zero start will prevent the LED from dimming to 0 for Off->On and On->Off
+# the subsequent Off state afterwards will use the previous start from On->Off for the display value.
+# Only 16 fade periods can be used.
+KLL_LED_FadePeriod => KLL_LED_FadePeriod_define;
+KLL_LED_FadePeriod[0] = "{ .start = 0, .end = 0 }";
+KLL_LED_FadePeriod[1] = "{ .start = 0, .end = 4 }";
+KLL_LED_FadePeriod[2] = "{ .start = 0, .end = 5 }";
+KLL_LED_FadePeriod[3] = "{ .start = 0, .end = 6 }";
+KLL_LED_FadePeriod[4] = "{ .start = 0, .end = 7 }";
+KLL_LED_FadePeriod[5] = "{ .start = 0, .end = 8 }";
+KLL_LED_FadePeriod[6] = "{ .start = 0, .end = 9 }";
+KLL_LED_FadePeriod[7] = "{ .start = 0, .end = 10 }";
+KLL_LED_FadePeriod[8] = "{ .start = 0, .end = 11 }";
+KLL_LED_FadePeriod[9] = "{ .start = 0, .end = 12 }";
+KLL_LED_FadePeriod[10] = "{ .start = 5, .end = 6 }";
+KLL_LED_FadePeriod[11] = "{ .start = 6, .end = 7 }";
+KLL_LED_FadePeriod[12] = "{ .start = 7, .end = 8 }";
+KLL_LED_FadePeriod[13] = "{ .start = 8, .end = 9 }";
+KLL_LED_FadePeriod[14] = "{ .start = 9, .end = 10 }";
+KLL_LED_FadePeriod[15] = "{ .start = 10, .end = 11 }";
+
+# Fade Default Configuration
+# There are 4 fade profiles
+# 0) Keys
+# 1) Underlighting
+# 2) Indicators
+# 3) Active Layer (uses fade_layer_highlight to refresh)
+# Each fade profile has 4 fade period configurations (see above).
+# 0) Off to On
+# 1) On
+# 2) On to Off
+# 3) Off
+## Keys
+KLL_LED_FadeDefaultConfig0 => KLL_LED_FadeDefaultConfig0_define;
+KLL_LED_FadeDefaultConfig0[0] = 0;
+KLL_LED_FadeDefaultConfig0[1] = 0;
+KLL_LED_FadeDefaultConfig0[2] = 0;
+KLL_LED_FadeDefaultConfig0[3] = 0;
+## Underlighting
+KLL_LED_FadeDefaultConfig1 => KLL_LED_FadeDefaultConfig1_define;
+KLL_LED_FadeDefaultConfig1[0] = 0;
+KLL_LED_FadeDefaultConfig1[1] = 0;
+KLL_LED_FadeDefaultConfig1[2] = 0;
+KLL_LED_FadeDefaultConfig1[3] = 0;
+## Indicators
+KLL_LED_FadeDefaultConfig2 => KLL_LED_FadeDefaultConfig2_define;
+KLL_LED_FadeDefaultConfig2[0] = 0;
+KLL_LED_FadeDefaultConfig2[1] = 0;
+KLL_LED_FadeDefaultConfig2[2] = 0;
+KLL_LED_FadeDefaultConfig2[3] = 0;
+## Active Layer
+KLL_LED_FadeDefaultConfig3 => KLL_LED_FadeDefaultConfig3_define;
+KLL_LED_FadeDefaultConfig3[0] = 0;
+KLL_LED_FadeDefaultConfig3[1] = 0;
+KLL_LED_FadeDefaultConfig3[2] = 0;
+KLL_LED_FadeDefaultConfig3[3] = 0;
+
 
 # Enable define
 Pixel_MapEnabled = "1";
@@ -32,6 +195,18 @@ Pixel_Buffer_Size   => Pixel_Buffer_Size_define;
 Pixel_Buffer_Width  => Pixel_Buffer_Width_define;
 Pixel_Buffer_Buffer => Pixel_Buffer_Buffer_define;
 Pixel_Buffer_Length => Pixel_Buffer_Length_define;
+
+# LED Buffer Defines
+LED_Buffer_Size   => LED_Buffer_Size_define;
+LED_Buffer_Width  => LED_Buffer_Width_define;
+LED_Buffer_Buffer => LED_Buffer_Buffer_define;
+LED_Buffer_Length => LED_Buffer_Length_define;
+
+# Fade Groups
+KLL_LED_FadeGroup => KLL_LED_FadeGroup_define;
+KLL_LED_FadeGroup[0] = "";
+KLL_LED_FadeGroup[1] = "";
+KLL_LED_FadeGroup[2] = "";
 
 # Pixel Display Mapping Parameters
 Pixel_DisplayMapping_UnitSize = 19; # Default unit spacing in mm

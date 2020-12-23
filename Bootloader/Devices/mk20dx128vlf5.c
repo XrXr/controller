@@ -1,17 +1,22 @@
-/* Copyright (C) 2017 by Jacob Alexander
+/* Copyright (C) 2017-2019 by Jacob Alexander
  *
- * This file is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
  *
- * This file is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
  *
- * You should have received a copy of the GNU General Public License
- * along with this file.  If not, see <http://www.gnu.org/licenses/>.
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+ * THE SOFTWARE.
  */
 
 //
@@ -22,10 +27,11 @@
 
 // Project Includes
 #include <Lib/entropy.h>
+#include <Lib/gpio.h>
 
 // Local Includes
 #include "../weak.h"
-#include "../mchck.h"
+#include "../device.h"
 #include "../debug.h"
 #include "../dfu.desc.h"
 
@@ -34,6 +40,9 @@
 // ----- Defines -----
 
 // ----- Variables -----
+
+// Debug LED
+const GPIO_Pin debug_led = gpio(A,19);
 
 uint32_t Chip_secure1;
 uint32_t Chip_secure2;
@@ -108,10 +117,9 @@ void Chip_setup()
 	// XXX McHCK uses B16 instead of A19
 
 	// Enabling LED to indicate we are in the bootloader
-	GPIOA_PDDR |= (1<<19);
 	// Setup pin - A19 - See Lib/pin_map.mchck for more details on pins
-	PORTA_PCR19 = PORT_PCR_SRE | PORT_PCR_DSE | PORT_PCR_MUX(1);
-	GPIOA_PSOR |= (1<<19);
+	GPIO_Ctrl( debug_led, GPIO_Type_DriveSetup, GPIO_Config_None );
+	GPIO_Ctrl( debug_led, GPIO_Type_DriveHigh, GPIO_Config_None );
 
 	/*
 	print( "Cur Secure Code - ");

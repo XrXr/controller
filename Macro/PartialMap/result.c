@@ -1,16 +1,16 @@
-/* Copyright (C) 2014-2018 by Jacob Alexander
+/* Copyright (C) 2014-2020 by Jacob Alexander
  *
  * This file is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
+ * it under the terms of the GNU Lesser General Public License as published by
  * the Free Software Foundation, either version 3 of the License, or
  * (at your option) any later version.
  *
  * This file is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+ * GNU Lesser General Public License for more details.
  *
- * You should have received a copy of the GNU General Public License
+ * You should have received a copy of the GNU Lesser General Public License
  * along with this file.  If not, see <http://www.gnu.org/licenses/>.
  */
 
@@ -83,6 +83,9 @@ volatile ResultCapabilityStack macroResultDelayedCapabilities;
 ResultCapabilityStackItem resultCapabilityCallbackData;
 #endif
 
+// Capability debug mode
+uint8_t capDebugMode;
+
 
 
 // ----- Functions -----
@@ -120,6 +123,14 @@ void Result_evalResultMacroCombo(
 			void (*capability)(TriggerMacro*, uint8_t, uint8_t, uint8_t*) = \
 				(void(*)(TriggerMacro*, uint8_t, uint8_t, uint8_t*))(CapabilitiesList[ guide->index ].func);
 
+			// Capability debug
+			if ( capDebugMode )
+			{
+				dbug_print("Safe: ");
+				capability( resultElem->trigger, ScheduleType_Debug, TriggerType_Debug, &guide->args );
+				print( NL );
+			}
+
 #if defined(_host_)
 			// Callback to indicate a capability has been called
 			resultCapabilityCallbackData.trigger         = resultElem->trigger;
@@ -155,12 +166,12 @@ void Result_evalResultMacroCombo(
 					if ( guide->args != 0 && item->args == &guide->args )
 					{
 						// Don't add
-						break;
+						continue;
 					}
 					else if ( guide->args == 0 )
 					{
 						// Don't add
-						break;
+						continue;
 					}
 				}
 			}
@@ -179,7 +190,7 @@ void Result_evalResultMacroCombo(
 		}
 		else
 		{
-			warn_print("Delayed capability stack full!");
+			warn_printNL("Delayed capability stack full!");
 		}
 
 		// Increment counters
@@ -202,25 +213,139 @@ void Result_appendResultMacroToPendingList( const TriggerMacro *triggerMacro )
 	elem->trigger = (TriggerMacro*)triggerMacro;
 	elem->index = resultMacroIndex;
 
-	// Lookup scanCode of the last key in the last combo
+	// Lookup index and type of a key in the last combo
+	// Depending on the trigger type, which key selected will vary
+	// First, find the last combo
+	var_uint_t prev_pos = 0;
 	var_uint_t pos = 0;
 	for ( uint8_t comboLength = triggerMacro->guide[0]; comboLength > 0; )
 	{
+		prev_pos = pos;
 		pos += TriggerGuideSize * comboLength + 1;
 		comboLength = triggerMacro->guide[ pos ];
 	}
 
-	uint8_t scanCode = ((TriggerGuide*)&triggerMacro->guide[ pos - TriggerGuideSize ])->scanCode;
-
-	// Lookup scanCode in buffer list for the current state and stateType
-	for ( var_uint_t keyIndex = 0; keyIndex < macroTriggerEventBufferSize; keyIndex++ )
+	// Parse the guide and scan each of the keys of the selected combo
+	TriggerEvent *event = 0;
+	for ( uint8_t elem = 0; elem < triggerMacro->guide[prev_pos]; elem++ )
 	{
-		if ( macroTriggerEventBuffer[ keyIndex ].index == scanCode )
+		// Calculate position of next TriggerGuide
+		TriggerGuide *cur_guide = (TriggerGuide*)&triggerMacro->guide[prev_pos + 1 + elem * TriggerGuideSize];
+		TriggerEvent *cur_event = 0;
+
+		// Lookup index in buffer list for the current state and stateType
+		for ( var_uint_t keyIndex = 0; keyIndex < macroTriggerEventBufferSize; keyIndex++ )
 		{
-			elem->record.state     = macroTriggerEventBuffer[ keyIndex ].state;
-			elem->record.stateType = macroTriggerEventBuffer[ keyIndex ].type;
+			if (
+				macroTriggerEventBuffer[ keyIndex ].index == cur_guide->scanCode &&
+				macroTriggerEventBuffer[ keyIndex ].type == cur_guide->type
+			)
+			{
+				cur_event = &macroTriggerEventBuffer[ keyIndex ];
+				break;
+			}
+
+		}
+
+		// Make sure an event was found...(this is unlikely)
+		if ( cur_event == 0 )
+		{
+
+			erro_printNL("Could not find event in event buffer for activated trigger! This is a bug!");
+			continue;
+		}
+
+		// If event hasn't been set, set it (may be overridden if a better state is found in the next iterations)
+		if ( event == 0 )
+		{
+			event = cur_event;
+		}
+
+		// Decide whether this is a good state to represent the Trigger
+		switch ( cur_guide->type )
+		{
+		// Normal State Type
+		case TriggerType_Switch1:
+		case TriggerType_Switch2:
+		case TriggerType_Switch3:
+		case TriggerType_Switch4:
+		// LED State Type
+		case TriggerType_LED1:
+		// Layer State Type
+		case TriggerType_Layer1:
+		case TriggerType_Layer2:
+		case TriggerType_Layer3:
+		case TriggerType_Layer4:
+		// Activity State Types
+		case TriggerType_Sleep1:
+		case TriggerType_Resume1:
+		case TriggerType_Inactive1:
+		case TriggerType_Active1:
+			// Only change representative state if Hold or Off going to Press or Release
+			if (
+				( event->state == ScheduleType_H || event->state == ScheduleType_O ) &&
+				( cur_event->state != event->state ) &&
+				( cur_event->state == ScheduleType_P || cur_event->state == ScheduleType_R )
+			)
+			{
+				event = cur_event;
+			}
+			// If there is a single release event, still choose Press
+			else if ( event->state == ScheduleType_P && cur_event->state == ScheduleType_R )
+			{
+				event = cur_event;
+			}
+			break;
+		// Analog State Type
+		case TriggerType_Analog1:
+		case TriggerType_Analog2:
+		case TriggerType_Analog3:
+		case TriggerType_Analog4:
+			// TODO (HaaTa) Just selects the first trigger for now
+			break;
+		// Animation State Type
+		case TriggerType_Animation1:
+		case TriggerType_Animation2:
+		case TriggerType_Animation3:
+		case TriggerType_Animation4:
+			// TODO (HaaTa) Just selects the first trigger for now
+			break;
+		// Rotation State Type
+		case TriggerType_Rotation1:
+			// TODO (HaaTa) Just selects the first trigger for now
+			break;
+		// Dial State Type
+		case TriggerType_Dial1:
+			// TODO (HaaTa) Just selects the first trigger for now
 			break;
 		}
+	}
+
+	// If event was not set, ignore
+	if ( !event )
+	{
+		erro_printNL("No event found! Bug!");
+		return;
+	}
+
+	// Assign state and state type
+	elem->record.state     = event->state;
+	elem->record.stateType = event->type;
+
+	// If this is a Layer stateType, mask the Shift/Latch/Lock information
+	switch ( elem->record.stateType )
+	{
+	case TriggerType_Layer1:
+	case TriggerType_Layer2:
+	case TriggerType_Layer3:
+	case TriggerType_Layer4:
+		// We don't want to mask 0xFF, which is a debug state
+		if ( elem->record.state & 0xF0 && ( elem->record.state & 0x80 ) == 0x00 )
+		{
+			// Need to mask over 0x70, allow through all the rest of the bits
+			elem->record.state &= 0x8F;
+		}
+		break;
 	}
 
 	// Reset the macro position
@@ -287,6 +412,9 @@ void Result_setup()
 
 	// Reset delayed capabilities stack
 	macroResultDelayedCapabilities.size = 0;
+
+	// Capability debug mode
+	capDebugMode = 0;
 }
 
 
@@ -308,6 +436,14 @@ void Result_process_delayed()
 		// Do lookup on capability function
 		void (*capability)(TriggerMacro*, uint8_t, uint8_t, uint8_t*) = \
 			(void(*)(TriggerMacro*, uint8_t, uint8_t, uint8_t*))(CapabilitiesList[ item->capabilityIndex ].func);
+
+		// Capability debug
+		if ( capDebugMode )
+		{
+			dbug_print("Un-safe: ");
+			capability( item->trigger, ScheduleType_Debug, TriggerType_Debug, item->args );
+			print( NL );
+		}
 
 #if defined(_host_)
 		// Callback to indicate a capability has been called

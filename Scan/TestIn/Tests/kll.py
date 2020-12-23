@@ -5,35 +5,31 @@ Selt-test unit test for Host-side KLL
 Uses the trigger:result syntax to self-test KLL file.
 '''
 
-# Copyright (C) 2016-2018 by Jacob Alexander
+# Copyright (C) 2016-2020 by Jacob Alexander
 #
 # This file is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
+# it under the terms of the GNU Lesser General Public License as published by
 # the Free Software Foundation, either version 3 of the License, or
 # (at your option) any later version.
 #
 # This file is distributed in the hope that it will be useful,
 # but WITHOUT ANY WARRANTY; without even the implied warranty of
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
+# GNU Lesser General Public License for more details.
 #
-# You should have received a copy of the GNU General Public License
+# You should have received a copy of the GNU Lesser General Public License
 # along with this file.  If not, see <http://www.gnu.org/licenses/>.
 
 ### Imports ###
 
 import logging
 import os
-import sys
 
 import interface as i
 import kiilogger
 
 from common import (
-    check,
-    fail_tests,
     header,
-    pass_tests,
     result,
     KLLTest,
     KLLTestUnitResult,
@@ -106,8 +102,8 @@ class SimpleLayerTest(KLLTest):
 
 testrunner = KLLTestRunner([
     SimpleLayerTest(),
-    #SimpleLayerTest(tests=1, test=154),
-    #SimpleLayerTest(tests=20, test=92),
+    #SimpleLayerTest(tests=1, test=0),
+    #SimpleLayerTest(tests=1, test=163),
 ])
 testrunner.run()
 

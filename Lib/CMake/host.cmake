@@ -1,6 +1,6 @@
 ###| CMAKE Kiibohd Controller |###
 #
-# Jacob Alexander 2016-2017
+# Jacob Alexander 2016-2020
 # Due to this file's usefulness:
 #
 # Released into the Public Domain
@@ -49,10 +49,14 @@ set( HOST 1 )
 #| Mostly for convenience functions like interrupt handlers
 set( COMPILER_SRCS
 	Lib/entropy.c
+	Lib/gpio.c
 	Lib/host.c
 	Lib/periodic.c
+	Lib/sleep.c
 	Lib/time.c
+	Lib/utf8.c
 )
+set( Device_KLL "${CMAKE_CURRENT_SOURCE_DIR}/Lib/sleep.kll" )
 
 #| Clang needs a few more functions for linking
 if ( "${COMPILER}" MATCHES "clang" )
@@ -105,6 +109,14 @@ else()
 		set( TUNING "-nostdlib -fshort-enums -fdata-sections -ffunction-sections -fshort-wchar -fno-builtin -nostartfiles" )
 	endif ()
 endif()
+
+
+#| Enabling profiling tools
+if ( DEFINED SANITIZER )
+	message( STATUS "Sanitizers enabled" )
+	# XXX (HaaTa): asan has been useful, tsan isn't useful (no pthreads), usan hasn't shown anything
+	set( TUNING "${TUNING} -D_SANITIZER_=${SANITIZER} -fsanitize=undefined,address -fno-omit-frame-pointer -fno-optimize-sibling-calls" )
+endif ()
 
 
 #| Enable color output with Ninja

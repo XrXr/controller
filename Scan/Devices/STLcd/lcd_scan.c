@@ -1,16 +1,16 @@
-/* Copyright (C) 2015-2018 by Jacob Alexander
+/* Copyright (C) 2015-2019 by Jacob Alexander
  *
  * This file is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
+ * it under the terms of the GNU Lesser General Public License as published by
  * the Free Software Foundation, either version 3 of the License, or
  * (at your option) any later version.
  *
  * This file is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+ * GNU Lesser General Public License for more details.
  *
- * You should have received a copy of the GNU General Public License
+ * You should have received a copy of the GNU Lesser General Public License
  * along with this file.  If not, see <http://www.gnu.org/licenses/>.
  */
 
@@ -130,8 +130,27 @@ void SPI_setup()
 		| SPI_CTAR_DT(7)
 		| SPI_CTAR_CSSCK(7)
 		| SPI_CTAR_PBR(0) | SPI_CTAR_BR(7);
+
 #elif defined(_sam_)
-	//SAM TODO
+	/*
+	// Power SPI
+	PMC->PMC_PCER0 = (1 << ID_SPI0);
+	PIOA->PIO_PDR |= (1<<11 | 1<<12 | 1<<13 | 1<14);
+
+	// Master Mode, fixed slave
+	SPI0->SPI_MR |= SPI_MR_MSTR | ~SPI_MR_PS;
+
+	// Mode 0
+	SPI0->SPI_CSR &= ~SPI_CSR_CPOL;
+	SPI0->SPI_CSR |= SPI_CSR_NCPHA;
+
+	// Set speed
+	uint16_t div = 1;
+	SPI0->SPI_CSR |= SPI_CSR_SCBR(div) | SPI_CSR_CSAAT;
+
+	// Enable SPI
+	SPI0->SPI_CR |= SPI_CR_SPIEN;
+	*/
 #endif
 }
 
@@ -154,7 +173,12 @@ void SPI_write( uint8_t *buffer, uint8_t len )
 		while ( !( SPI0_SR & SPI_SR_TCF ) );
 		SPI0_SR |= SPI_SR_TCF;
 #elif defined(_sam_)
-	//SAM TODO
+		/*
+		// Wait for transmit register to be empty
+		while (!(SPI0->SPI_SR & SPI_SR_TDRE));
+		// Send data to transmit register
+		SPI0->SPI_TDR = data;
+		*/
 #endif
 	}
 }
@@ -181,7 +205,17 @@ void LCD_writeControlReg( uint8_t byte )
 	// Set A0 high to go back to display register mode
 	GPIOC_PSOR |= (1<<7);
 #elif defined(_sam_)
-	//SAM TODO
+	// Set A0 low to enter control register mode
+	PIOC->PIO_CODR= (1<<7);
+
+	// Write byte to SPI FIFO
+	SPI_write( &byte, 1 );
+
+	// Make sure data has transferred
+	delay_us(10); // XXX Adjust if SPI speed changes
+
+	// Set A0 high to go back to display register mode
+	PIOC->PIO_SODR= (1<<7);
 #endif
 }
 
@@ -192,8 +226,8 @@ void LCD_writeDataReg( uint8_t byte )
 	// Wait for TxFIFO to be empt
 	while ( SPI0_TxFIFO_CNT != 0 );
 
-        // Set A0 high to enter display register mode
-        GPIOC_PSOR |= (1<<7);
+	// Set A0 high to enter display register mode
+	GPIOC_PSOR |= (1<<7);
 
 	// Write byte to SPI FIFO
 	SPI_write( &byte, 1 );
@@ -204,7 +238,14 @@ void LCD_writeDataReg( uint8_t byte )
 	// Make sure data has transferred
 	delay_us(10); // XXX Adjust if SPI speed changes
 #elif defined(_sam_)
-	//SAM TODO
+	// Set A0 high to enter display register mode
+	PIOC->PIO_SODR= (1<<7);
+
+	// Write byte to SPI FIFO
+	SPI_write( &byte, 1 );
+
+	// Make sure data has transferred
+	delay_us(10); // XXX Adjust if SPI speed changes
 #endif
 
 }
@@ -251,8 +292,6 @@ void LCD_clearPage( uint8_t page )
 	// Wait for TxFIFO to be empty
 #if defined(_kinetis_)
 	while ( SPI0_TxFIFO_CNT != 0 );
-#elif defined(_sam_)
-	//SAM TODO
 #endif
 }
 
@@ -321,27 +360,41 @@ inline void LCD_setup()
 	// Initialize SPI
 	SPI_setup();
 
-#if defined(_kinetis_)
 	// Setup Register Control Signal (A0)
 	// Start in display register mode (1)
+#if defined(_kinetis_)
 	GPIOC_PDDR |= (1<<7);
 	PORTC_PCR7 = PORT_PCR_SRE | PORT_PCR_DSE | PORT_PCR_MUX(1);
 	GPIOC_PSOR |= (1<<7);
+#elif defined(_sam_)
+	PIOC->PIO_PER = (1<<7);
+	PIOC->PIO_OER = (1<<7);
+	PIOC->PIO_SODR = (1<<7);
+#endif
 
 	// Setup LCD Reset pin (RST)
 	// 0 - Reset, 1 - Normal Operation
 	// Start in normal mode (1)
+#if defined(_kinetis_)
 	GPIOC_PDDR |= (1<<8);
 	PORTC_PCR8 = PORT_PCR_SRE | PORT_PCR_DSE | PORT_PCR_MUX(1);
 	GPIOC_PSOR |= (1<<8);
+#elif defined(_sam_)
+	PIOC->PIO_PER = (1<<8);
+	PIOC->PIO_OER = (1<<8);
+	PIOC->PIO_SODR = (1<<8);
+#endif
 
 	// Run LCD intialization sequence
 	LCD_initialize();
 
 	// Write default image to LCD
 	for ( uint8_t page = 0; page < LCD_TOTAL_VISIBLE_PAGES; page++ )
+	{
 		LCD_writeDisplayReg( page, (uint8_t*)&STLcdDefaultImage[page * LCD_PAGE_LEN], LCD_PAGE_LEN );
+	}
 
+#if defined(_kinetis_)
 	// Setup Backlight
 	SIM_SCGC6 |= SIM_SCGC6_FTM0;
 	FTM0_CNT = 0; // Reset counter
@@ -385,7 +438,25 @@ inline void LCD_setup()
 	FTM0_C2V = STLcdBacklightBlue_define;
 	PORTC_PCR3 = PORT_PCR_SRE | PORT_PCR_DSE | PORT_PCR_MUX(4);
 #elif defined(_sam_)
-	//SAM TODO
+	/*
+	//SAM TODO - PWM
+	PMC->PMC_PCER0 = (1 << ID_PWM);
+	PIOA->PIO_PDR |= (1<<0 | 1<<1 | 1<<2);
+
+	PWM->PWM_ENA = PWM_ENA_CHID0 | PWM_ENA_CHID1 | PWM_ENA_CHID2;
+
+	PWM->PWM_CMR0 = PWM_CMR_CPRE_MCK_DIV_8;
+	PWM->PWM_CPRD0 = 0xFFFF;
+	PWM->PWM_CDTY0 = STLcdBacklightRed_define;
+
+	PWM->PWM_CMR1 = PWM_CMR_CPRE_MCK_DIV_8;
+	PWM->PWM_CPRD1 = 0xFFFF;
+	PWM->PWM_CDTY1 = STLcdBacklightGreen_define;
+
+	PWM->PWM_CMR2 = PWM_CMR_CPRE_MCK_DIV_8;
+	PWM->PWM_CPRD2 = 0xFFFF;
+	PWM->PWM_CDTY2 = STLcdBacklightBlue_define;
+	*/
 #endif
 
 	// Allocate Latency resource
@@ -448,7 +519,19 @@ inline uint8_t LCD_scan()
 // current - mA
 void LCD_currentChange( unsigned int current )
 {
-	// TODO - Power savings?
+#if defined(_kinetis_)
+	// Since we are only disabling the PWM module, we can just do this immediately
+	if ( current < 150 )
+	{
+		SIM_SCGC6 &= ~(SIM_SCGC6_FTM0);
+	}
+	else
+	{
+		SIM_SCGC6 |= SIM_SCGC6_FTM0;
+	}
+#elif defined(_sam_)
+	//SAM TODO
+#endif
 }
 
 
@@ -664,7 +747,9 @@ void cliFunc_lcdTest( char* args )
 {
 	// Write default image
 	for ( uint8_t page = 0; page < LCD_TOTAL_VISIBLE_PAGES; page++ )
+	{
 		LCD_writeDisplayReg( page, (uint8_t *)&STLcdDefaultImage[page * LCD_PAGE_LEN], LCD_PAGE_LEN );
+	}
 }
 
 void cliFunc_lcdCmd( char* args )
@@ -691,16 +776,16 @@ void cliFunc_lcdCmd( char* args )
 	// Single Arg
 	if ( *arg2Ptr == '\0' )
 	{
-        info_msg("Sending- ");
+        info_print("Sending- ");
 		printHex( cmd );
 		print( NL );
 		LCD_writeControlReg( cmd );
 		return;
 	}
 
-	if ( *arg2Ptr != '\0' ) 
+	if ( *arg2Ptr != '\0' )
 	{
-		info_msg("Sending WITH A0 FLAG SET- ");
+		info_print("Sending WITH A0 FLAG SET- ");
 		printHex( cmd );
 		print( NL );
 		LCD_writeDataReg( cmd );
@@ -782,7 +867,7 @@ void cliFunc_lcdDisp( char* args )
 		if ( *arg1Ptr == '\0' )
 			break;
 
-		uint8_t value = numToInt( arg1Ptr ); 
+		uint8_t value = numToInt( arg1Ptr );
 		// Write buffer to SPI
 		SPI_write( &value, 1 );
 	}

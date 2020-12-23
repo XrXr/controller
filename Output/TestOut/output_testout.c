@@ -100,7 +100,7 @@ inline void TestOut_periodic()
 {
 #if enableMouse_define == 1
 	// Process mouse actions
-	while ( USBMouse_Changed )
+	while ( USBMouse_primary.changed )
 	{
 		Output_callback( "mouse_send", "" );
 	}
@@ -158,45 +158,29 @@ inline void TestOut_firmwareReload()
 // USB Input buffer available
 inline unsigned int TestOut_availablechar()
 {
-#if enableVirtualSerialPort_define == 1
 	return (unsigned int)Output_callback( "serial_available", "" );
-#else
-	return 0;
-#endif
 }
 
 
 // USB Get Character from input buffer
 inline int TestOut_getchar()
 {
-#if enableVirtualSerialPort_define == 1
 	return Output_callback( "serial_read", "" );
-#else
-	return 0;
-#endif
 }
 
 
 // USB Send Character to output buffer
 inline int TestOut_putchar( char c )
 {
-#if enableVirtualSerialPort_define == 1
 	char out[2] = { c, '\0' };
 	return Output_callback( "serial_write", out );
-#else
-	return 0;
-#endif
 }
 
 
 // USB Send String to output buffer, null terminated
 inline int TestOut_putstr( char* str )
 {
-#if enableVirtualSerialPort_define == 1
 	return Output_callback( "serial_write", str );
-#else
-	return 0;
-#endif
 }
 
 
